@@ -16,5 +16,23 @@
     "shortNe2": "tmon",
     "result": "▶️ 114.1.103.235 | SBY-KRJR-EN1-910C | GigabitEthernet0/2/0 | 10000 | 10G:to_SBY-TMON-OPT-H910C_Gi0/2/1:via OTB 1/2 iForte | -11.51 | -14.40 | up ✅\n▶️ 114.1.103.235 | SBY-KRJR-EN1-910C | GigabitEthernet0/2/2 | 10000 | 10G:to_SBY-TMON-OPT-H910C_Gi0/2/3:via OTB 1/2 iForte | -12.68 | -14.40 | up ✅\n\n────────────\n▶️ 114.15.149.87 | SBY-TMON-OPT-H910C | GigabitEthernet0/2/1 | 10000 | 10G:to_SBY-KRJR-EN1-910C_Gi0/2/7:via_OTB_7/8_IF | -13.69 | -14.40 | up ✅\n",
     "timestamp": "4/27/2025, 5:53:19 AM"
+  },
+  {
+    "name": "SBY-DSBL-EN1-910C GSIN-EN1-910C",
+    "ne1": "sby-dsbl-en1-910c",
+    "ne2": "gsin-en1-910c",
+    "shortNe1": "dsbl",
+    "shortNe2": "en1",
+    "result": "▶️ 114.1.103.121 | SBY-DSBL-EN1-910C | GigabitEthernet0/2/1 | 10000 | 10G:to_SBY-GSIN-EN1-910C Gi0/2/0 via OTB 7/8 iForte | -40.00 | -14.40 | down ❌\n\n────────────\n❌ Tidak ada data yang relevan",
+    "timestamp": "4/27/2025, 6:53:17 AM"
+  },
+  {
+    "name": "SBY-DSBL-EN1-910C SBY-GSIN-EN1-910C",
+    "ne1": "sby-dsbl-en1-910c",
+    "ne2": "sby-gsin-en1-910c",
+    "shortNe1": "dsbl",
+    "shortNe2": "gsin",
+    "result": "▶️ 114.1.103.121 | SBY-DSBL-EN1-910C | GigabitEthernet0/2/1 | 10000 | 10G:to_SBY-GSIN-EN1-910C Gi0/2/0 via OTB 7/8 iForte | -40.00 | -14.40 | down ❌\n\n────────────\n▶️ 114.1.103.122 | SBY-GSIN-EN1-910C | GigabitEthernet0/2/0 | 10000 | 10G:to_SBY-DSBL-EN1-910C Gi0/2/1 via OTB 1/2 iForte | -40.00 | -14.40 | down ❌\n",
+    "timestamp": "4/27/2025, 6:55:09 AM"
   }
 ]

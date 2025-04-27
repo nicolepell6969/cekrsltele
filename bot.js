@@ -14,14 +14,25 @@ const historyFilePath = './history.json';
 // Membaca riwayat pengecekan dari file saat bot mulai
 let history = [];
 
-if (fs.existsSync(historyFilePath)) {
-    const fileData = fs.readFileSync(historyFilePath);
-    history = JSON.parse(fileData);
+try {
+    if (fs.existsSync(historyFilePath)) {
+        const fileData = fs.readFileSync(historyFilePath);
+        if (fileData) {
+            history = JSON.parse(fileData);
+        }
+    }
+} catch (error) {
+    console.error('Gagal membaca atau mengurai file JSON:', error);
+    history = [];  // Setel history ke array kosong jika terjadi kesalahan
 }
 
 // Fungsi untuk menyimpan riwayat pengecekan ke dalam file log
 function saveHistoryToFile() {
-    fs.writeFileSync(historyFilePath, JSON.stringify(history, null, 2));
+    try {
+        fs.writeFileSync(historyFilePath, JSON.stringify(history, null, 2));
+    } catch (error) {
+        console.error('Gagal menyimpan file history.json:', error);
+    }
 }
 
 // Fungsi untuk membuat riwayat pengecekan
@@ -31,10 +42,6 @@ function addHistory(ne1, ne2, result, name) {
     const shortNe2 = ne2.split('-')[1].slice(0, 4);
 
     history.push({ name, ne1, ne2, shortNe1, shortNe2, result, timestamp });
-    if (history.length > 5) {
-        history.shift(); // Menghapus riwayat lebih lama jika melebihi 5 pengecekan
-    }
-
     // Simpan riwayat ke file log
     saveHistoryToFile();
 }
@@ -42,10 +49,16 @@ function addHistory(ne1, ne2, result, name) {
 // Fungsi untuk menampilkan riwayat dengan tombol interaktif
 function createHistoryButtons() {
     return history.map((entry, index) => {
-        return [{
-            text: `${entry.shortNe1} ↔ ${entry.shortNe2}`,
-            callback_data: `retry_${index}`
-        }];
+        return [
+            {
+                text: `Ulangi Pengecekan ${entry.name} - ${entry.shortNe1} ↔ ${entry.shortNe2}`,
+                callback_data: `retry_${index}`
+            },
+            {
+                text: `Hapus ${entry.shortNe1} ↔ ${entry.shortNe2}`,
+                callback_data: `delete_${index}`
+            }
+        ];
     });
 }
 
@@ -63,7 +76,7 @@ bot.on('message', async (msg) => {
         
         const [ne1, ne2] = neNames;
         const name = msg.text.split(' ').slice(1).join(' ');  // Mengambil nama pengecekan dari input
-        bot.sendMessage(msg.chat.id, `🔄 ONCEK, DITUNGGU`);
+        bot.sendMessage(msg.chat.id, `🔄 *ONCEK, DITUNGGU*`);
         
         // Cek dua arah (ne1 -> ne2 dan ne2 -> ne1)
         const result1 = await checkMetroStatus(ne1, ne2, { mode: 'normal' });
@@ -79,15 +92,23 @@ bot.on('message', async (msg) => {
         bot.sendMessage(msg.chat.id, combinedResult);
 
         // Menampilkan tombol riwayat pengecekan
-        bot.sendMessage(msg.chat.id, '👉 Klik di bawah untuk melakukan pengecekan ulang:', {
+        bot.sendMessage(msg.chat.id, '👉 Klik di bawah untuk melakukan pengecekan ulang atau menghapus riwayat:', {
             reply_markup: {
                 inline_keyboard: createHistoryButtons()
             }
         });
     } else if (messageText === '/history') {
-        // Menampilkan riwayat pengecekan dengan tombol interaktif
+        // Menampilkan seluruh riwayat pengecekan dengan tombol interaktif
         if (history.length > 0) {
-            bot.sendMessage(msg.chat.id, '📜 Riwayat Pengecekan:', {
+            let historyText = '📜 Riwayat Pengecekan:\n';
+            history.forEach((entry, index) => {
+                historyText += `\n${index + 1}. ${entry.name} - ${entry.ne1} ↔ ${entry.ne2} | Waktu: ${entry.timestamp}`;
+            });
+
+            bot.sendMessage(msg.chat.id, historyText);
+
+            // Menampilkan tombol riwayat pengecekan
+            bot.sendMessage(msg.chat.id, '👉 Klik di bawah untuk melakukan pengecekan ulang atau menghapus riwayat:', {
                 reply_markup: {
                     inline_keyboard: createHistoryButtons()  // Menggunakan fungsi yang sudah ada
                 }
@@ -100,7 +121,7 @@ bot.on('message', async (msg) => {
     }
 });
 
-// Menangani klik tombol riwayat pengecekan atau pengecekan ulang
+// Menangani klik tombol riwayat pengecekan, pengecekan ulang, atau hapus riwayat
 bot.on('callback_query', async (query) => {
     const { data, message } = query;
 
@@ -125,6 +146,22 @@ bot.on('callback_query', async (query) => {
 
                 // Mengirimkan hasil pengecekan ulang
                 bot.sendMessage(message.chat.id, `🔁 Pengecekan ulang selesai:\n\n${combinedResult}`);
+            }
+        }
+
+        if (data.startsWith('delete_')) {
+            const index = parseInt(data.split('_')[1]);
+            const entry = history[index];
+
+            if (entry) {
+                // Hapus entry dari riwayat
+                history.splice(index, 1);
+
+                // Simpan perubahan ke file
+                saveHistoryToFile();
+
+                // Kirim pesan konfirmasi ke pengguna
+                bot.sendMessage(message.chat.id, `✅ Riwayat pengecekan ${entry.shortNe1} ↔ ${entry.shortNe2} telah dihapus.`);
             }
         }
     } catch (error) {
