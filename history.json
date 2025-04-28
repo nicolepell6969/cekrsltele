@@ -44,5 +44,15 @@
     "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.83 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.78 | -8.90 | up ✅\n",
     "timestamp": "28/4/2025, 15.57.49",
     "duration": 18.71
+  },
+  {
+    "name": "SBY-GUBG-EN1-H910D SBY-KJYT-EN1-H910D",
+    "ne1": "sby-gubg-en1-h910d",
+    "ne2": "sby-kjyt-en1-h910d",
+    "shortNe1": "gubg",
+    "shortNe2": "kjyt",
+    "result": "▶️ 114.15.33.84 | SBY-GUBG-EN1-H910D | 100GE0/2/25 | 50000 | 50G:To_SBY-KJYT-EN1-H910D_100GE0/2/24:Via_OTB_3&4_IM2 | -5.13 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.33.85 | SBY-KJYT-EN1-H910D | 100GE0/2/24 | 50000 | 50G:To_SBY-GUBG-EN1-H910D_100GE0/2/25:Via_OTB_1&2_IM2 | -3.83 | -8.90 | up ✅\n",
+    "timestamp": "28/4/2025, 17.03.53",
+    "duration": 21.916
   }
 ]
