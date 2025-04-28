@@ -11,6 +11,12 @@ const bot = new TelegramBot(token, { polling: true });
 // Lokasi file log untuk riwayat pengecekan
 const historyFilePath = './history.json';
 
+// Fungsi untuk memeriksa apakah riwayat yang sama sudah ada
+function isDuplicate(ne1, ne2) {
+    return history.some(entry => (entry.ne1 === ne1 && entry.ne2 === ne2) || (entry.ne1 === ne2 && entry.ne2 === ne1));
+}
+
+
 // Membaca riwayat pengecekan dari file saat bot mulai
 let history = [];
 
@@ -37,6 +43,12 @@ function saveHistoryToFile() {
 
 // Fungsi untuk membuat riwayat pengecekan
 function addHistory(ne1, ne2, result, name, startTime, endTime) {
+    // Cek apakah riwayat yang sama sudah ada
+    if (isDuplicate(ne1, ne2)) {
+        console.log('Riwayat ini sudah ada, tidak akan disimpan.');
+        return;  // Jika riwayat sudah ada, jangan simpan lagi
+    }
+
     const timestamp = new Date(startTime).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });  // Menggunakan timezone Jakarta
     const shortNe1 = ne1.split('-')[1].slice(0, 4);
     const shortNe2 = ne2.split('-')[1].slice(0, 4);
@@ -46,6 +58,7 @@ function addHistory(ne1, ne2, result, name, startTime, endTime) {
     // Simpan riwayat ke file log
     saveHistoryToFile();
 }
+
 
 // Fungsi untuk menampilkan riwayat dengan tombol interaktif
 function createHistoryButtons() {
@@ -77,7 +90,7 @@ bot.on('message', async (msg) => {
         
         const [ne1, ne2] = neNames;
         const name = msg.text.split(' ').slice(1).join(' ');  // Mengambil nama pengecekan dari input
-        bot.sendMessage(msg.chat.id, `🔄 *ONCEK, DITUNGGU*`);
+        bot.sendMessage(msg.chat.id, `🔄 ONCEK, DITUNGGU`);
 
         // Mencatat waktu mulai pengecekan
         const startTime = new Date().getTime();
@@ -142,17 +155,20 @@ bot.on('callback_query', async (query) => {
 
             if (entry) {
                 // Mengirimkan pesan bahwa pengecekan ulang sedang dilakukan
-                bot.sendMessage(message.chat.id, `🔄 Melakukan pengecekan ulang untuk: ${entry.ne1} ↔ ${entry.ne2}...`);
+                bot.sendMessage(message.chat.id, `🔄 Checking: ${entry.ne1} ↔ ${entry.ne2}...`);
 
                 // Melakukan pengecekan ulang menggunakan NE Name yang ada di riwayat
                 const result1 = await checkMetroStatus(entry.ne1, entry.ne2, { mode: 'normal' });
                 const result2 = await checkMetroStatus(entry.ne2, entry.ne1, { mode: 'normal' });
 
+                const endTime = new Date().getTime();
+
                 // Gabungkan hasil pengecekan ulang
                 const combinedResult = result1 + '\n────────────\n' + result2;
 
                 // Mengirimkan hasil pengecekan ulang
-                bot.sendMessage(message.chat.id, `🔁 Pengecekan ulang selesai:\n\n${combinedResult}`);
+                bot.sendMessage(message.chat.id, `🕛Checked Time: ${new Date(endTime).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${combinedResult}`);
+                //bot.sendMessage(msg.chat.id, `🕛Checked Time: ${new Date(endTime).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${combinedResult}`);
             }
         }
 
