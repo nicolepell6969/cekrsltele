@@ -52,5 +52,122 @@
     "shortNe2": "kdmj",
     "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.82 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.78 | -8.90 | up ✅\n",
     "timestamp": "4/28/2025, 7:43:28 AM"
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.84 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.79 | -8.90 | up ✅\n",
+    "timestamp": "4/28/2025, 8:11:36 AM"
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.84 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.80 | -8.90 | up ✅\n",
+    "timestamp": "4/28/2025, 8:16:11 AM"
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.83 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.80 | -8.90 | up ✅\n",
+    "timestamp": "4/28/2025, 8:18:50 AM"
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.84 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.79 | -8.90 | up ✅\n",
+    "timestamp": "4/28/2025, 8:27:11 AM",
+    "duration": 21.959
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.84 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.80 | -8.90 | up ✅\n",
+    "timestamp": "4/28/2025, 8:29:24 AM",
+    "duration": 19.515
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.84 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.80 | -8.90 | up ✅\n",
+    "timestamp": "28/4/2025, 15.31.46",
+    "duration": 19.932
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.84 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.79 | -8.90 | up ✅\n",
+    "timestamp": "28/4/2025, 15.33.08",
+    "duration": 20.662
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.83 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.77 | -8.90 | up ✅\n",
+    "timestamp": "28/4/2025, 15.49.52",
+    "duration": 18.849
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.83 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.78 | -8.90 | up ✅\n",
+    "timestamp": "28/4/2025, 15.54.54",
+    "duration": 19.658
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.83 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.78 | -8.90 | up ✅\n",
+    "timestamp": "28/4/2025, 15.57.49",
+    "duration": 18.71
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.83 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.78 | -8.90 | up ✅\n",
+    "timestamp": "28/4/2025, 15.59.42",
+    "duration": 18.318
+  },
+  {
+    "name": "SBY-GOND-EN1-H910D SBY-KDMJ-EN1-H910D",
+    "ne1": "sby-gond-en1-h910d",
+    "ne2": "sby-kdmj-en1-h910d",
+    "shortNe1": "gond",
+    "shortNe2": "kdmj",
+    "result": "▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | GigabitEthernet0/2/1 | 1000 | 1G:To_SBY-KDMJ-EN1-H910D_Temp | -40.00 | -16.98 | down ❌\n▶️ 114.15.39.15 | SBY-GOND-EN1-H910D | 100GE0/2/27 | 50000 | 50G:to_SBY-KDMJ-EN1-H910D_100GE0/2/24:Via_OTB_12_BIT | -4.83 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.39.20 | SBY-KDMJ-EN1-H910D | 100GE0/2/24 | 50000 | 50G:to_SBY-GOND-EN1-H910D_100GE0/2/27:Via_OTB_34_BIT | -3.77 | -8.90 | up ✅\n",
+    "timestamp": "28/4/2025, 16.00.57",
+    "duration": 20.751
   }
 ]
