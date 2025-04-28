@@ -1,14 +1,5 @@
 [
   {
-    "name": "SBY-DOSB-EN1-H8M08 SBY-TMON-OPT-H910C",
-    "ne1": "sby-dosb-en1-h8m08",
-    "ne2": "sby-tmon-opt-h910c",
-    "shortNe1": "dosb",
-    "shortNe2": "tmon",
-    "result": "▶️ 114.15.34.32 | SBY-DOSB-EN1-H8M08 | GigabitEthernet0/1/6 | 10000 | 10G:to_SBY-TMON-OPT-H910C_Gi0/2/0:via_OTB_1&2_Iforte | -9.43 | -14.40 | down ✅\n\n────────────\n▶️ 114.15.149.87 | SBY-TMON-OPT-H910C | GigabitEthernet0/2/0 | 10000 | 10G:to_SBY-DOSB-EN1-H8M08_Gi0/1/6:Via_OTB_1/2_IF | -40.00 | -14.40 | down ❌\n",
-    "timestamp": "4/27/2025, 5:52:31 AM"
-  },
-  {
     "name": "SBY-KRJR-EN1-910C SBY-TMON-OPT-H910C",
     "ne1": "sby-krjr-en1-910c",
     "ne2": "sby-tmon-opt-h910c",
