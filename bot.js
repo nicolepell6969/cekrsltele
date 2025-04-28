@@ -51,7 +51,7 @@ function createHistoryButtons() {
     return history.map((entry, index) => {
         return [
             {
-                text: `Ulangi Pengecekan ${entry.name} - ${entry.shortNe1} ↔ ${entry.shortNe2}`,
+                text: `${entry.shortNe1} ↔ ${entry.shortNe2}`,
                 callback_data: `retry_${index}`
             },
             {
@@ -76,7 +76,7 @@ bot.on('message', async (msg) => {
         
         const [ne1, ne2] = neNames;
         const name = msg.text.split(' ').slice(1).join(' ');  // Mengambil nama pengecekan dari input
-        bot.sendMessage(msg.chat.id, `🔄 *ONCEK, DITUNGGU*`);
+        bot.sendMessage(msg.chat.id, `🔄 ONCEK, DITUNGGU`);
         
         // Cek dua arah (ne1 -> ne2 dan ne2 -> ne1)
         const result1 = await checkMetroStatus(ne1, ne2, { mode: 'normal' });
@@ -92,11 +92,12 @@ bot.on('message', async (msg) => {
         bot.sendMessage(msg.chat.id, combinedResult);
 
         // Menampilkan tombol riwayat pengecekan
-        bot.sendMessage(msg.chat.id, '👉 Klik di bawah untuk melakukan pengecekan ulang atau menghapus riwayat:', {
-            reply_markup: {
-                inline_keyboard: createHistoryButtons()
-            }
-        });
+//        bot.sendMessage(msg.chat.id, '👉 Klik di bawah untuk melakukan pengecekan ulang atau menghapus riwayat:', {
+//            reply_markup: {
+//                inline_keyboard: createHistoryButtons()
+//            }
+//        }
+// );
     } else if (messageText === '/history') {
         // Menampilkan seluruh riwayat pengecekan dengan tombol interaktif
         if (history.length > 0) {
