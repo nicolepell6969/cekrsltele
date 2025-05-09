@@ -45,5 +45,25 @@
     "result": "▶️ 114.15.33.84 | SBY-GUBG-EN1-H910D | 100GE0/2/25 | 50000 | 50G:To_SBY-KJYT-EN1-H910D_100GE0/2/24:Via_OTB_3&4_IM2 | -5.13 | -8.90 | up ✅\n\n────────────\n▶️ 114.15.33.85 | SBY-KJYT-EN1-H910D | 100GE0/2/24 | 50000 | 50G:To_SBY-GUBG-EN1-H910D_100GE0/2/25:Via_OTB_1&2_IM2 | -3.83 | -8.90 | up ✅\n",
     "timestamp": "28/4/2025, 17.03.53",
     "duration": 21.916
+  },
+  {
+    "name": "SBY-MJOI-EN1-H910D SBY-IDGR-OPT-H910C",
+    "ne1": "sby-mjoi-en1-h910d",
+    "ne2": "sby-idgr-opt-h910c",
+    "shortNe1": "mjoi",
+    "shortNe2": "idgr",
+    "result": "▶️ 114.15.34.17 | SBY-MJOI-EN1-H910D | 25GE0/2/11 | 10000 | 10G:to_SBY-IDGR-OPT-H910C_Gi0/2/0:via_OTB_1/2_iForte | -40.00 | -18.01 | down ❌\n\n────────────\n▶️ 114.1.125.204 | SBY-IDGR-OPT-H910C | GigabitEthernet0/2/0 | 10000 | 10G:to_SBY-MJOI-EN1-H910D_25GE0/2/11:Via_OTB_7/8_iForte | -40.00 | -18.01 | down ❌\n",
+    "timestamp": "5/5/2025, 11.01.41",
+    "duration": 24.358
+  },
+  {
+    "name": "SBY-GDK-EN1-H8M14 SBY-BDKL-OPT-H910C",
+    "ne1": "sby-gdk-en1-h8m14",
+    "ne2": "sby-bdkl-opt-h910c",
+    "shortNe1": "gdk",
+    "shortNe2": "bdkl",
+    "result": "❌ Gagal memeriksa RX Level\nError: net::ERR_EMPTY_RESPONSE at http://124.195.52.213:9487/snmp/status_rx-level.php?snmphost=114.15.34.34&comm=isat-m3tro-read&mename=SBY-GDK-EN1-H8M14&s_id=\n────────────\n▶️ 114.1.144.61 | SBY-BDKL-OPT-H910C | GigabitEthernet0/2/1 | 10000 | 10G:to_SBY-GDK-EN1-H8M14_Gi0/1/1:via_OTB7/8_iforte | -40.00 | -14.40 | down ❌\n▶️ 114.1.144.61 | SBY-BDKL-OPT-H910C | GigabitEthernet0/2/3 | 10000 | 10G:to_SBY-GDK-EN1-H8M14_Gi0/1/0:via_OTB7/8_iforte | -11.73 | -14.40 | up ✅\n",
+    "timestamp": "7/5/2025, 20.23.12",
+    "duration": 13.608
   }
 ]
