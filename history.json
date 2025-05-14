@@ -65,5 +65,35 @@
     "result": "❌ Gagal memeriksa RX Level\nError: net::ERR_EMPTY_RESPONSE at http://124.195.52.213:9487/snmp/status_rx-level.php?snmphost=114.15.34.34&comm=isat-m3tro-read&mename=SBY-GDK-EN1-H8M14&s_id=\n────────────\n▶️ 114.1.144.61 | SBY-BDKL-OPT-H910C | GigabitEthernet0/2/1 | 10000 | 10G:to_SBY-GDK-EN1-H8M14_Gi0/1/1:via_OTB7/8_iforte | -40.00 | -14.40 | down ❌\n▶️ 114.1.144.61 | SBY-BDKL-OPT-H910C | GigabitEthernet0/2/3 | 10000 | 10G:to_SBY-GDK-EN1-H8M14_Gi0/1/0:via_OTB7/8_iforte | -11.73 | -14.40 | up ✅\n",
     "timestamp": "7/5/2025, 20.23.12",
     "duration": 13.608
+  },
+  {
+    "name": "SBY-IDGR-OPT-H910C SBY-NGMS-OPT-H910C",
+    "ne1": "sby-idgr-opt-h910c",
+    "ne2": "sby-ngms-opt-h910c",
+    "shortNe1": "idgr",
+    "shortNe2": "ngms",
+    "result": "▶️ 114.1.125.204 | SBY-IDGR-OPT-H910C | GigabitEthernet0/2/1 | 10000 | 10G:to_SBY-NGMS-OPT-H910C_Gi0/2/0:via_OTB_1/2_IFORTE | -40.00 | -14.40 | down ❌\n▶️ 114.1.125.204 | SBY-IDGR-OPT-H910C | GigabitEthernet0/2/3 | 10000 | 10G:to_SBY-NGMS-OPT-H910C_Gi0/2/2:via_OTB_1/2_IFORTE | -40.00 | -14.40 | down ❌\n\n────────────\n▶️ 114.1.125.205 | SBY-NGMS-OPT-H910C | GigabitEthernet0/2/0 | 10000 | 10G:to_SBY-IDGR-OPT-H910C_Gi0/2/1:Via_OTB_7/8_IFORTE | -40.00 | -14.40 | down ❌\n▶️ 114.1.125.205 | SBY-NGMS-OPT-H910C | GigabitEthernet0/2/2 | 10000 | 10G:to_SBY-IDGR-OPT-H910C_Gi0/2/3:Via_OTB_7/8_IFORTE | -40.00 | -14.40 | down ❌\n",
+    "timestamp": "11/5/2025, 18.47.58",
+    "duration": 18.36
+  },
+  {
+    "name": "SBY-KEGE-OPT-H910C SBY-PWON-OPT-H910C",
+    "ne1": "sby-kege-opt-h910c",
+    "ne2": "sby-pwon-opt-h910c",
+    "shortNe1": "kege",
+    "shortNe2": "pwon",
+    "result": "▶️ 114.1.144.211 | SBY-KEGE-OPT-H910C | GigabitEthernet0/2/1 | 10000 | 10G:to_SBY-PWON-OPT-H910C_Gi0/2/0:via_OTB_7/8_IFORTE | -10.94 | -18.01 | up ✅\n▶️ 114.1.144.211 | SBY-KEGE-OPT-H910C | GigabitEthernet0/2/3 | 10000 | 10G:to_SBY-PWON-OPT-H910C_Gi0/2/2:via_OTB_7/8_IFORTE | -40.00 | -18.01 | down ❌\n\n────────────\n▶️ 114.1.144.212 | SBY-PWON-OPT-H910C | GigabitEthernet0/2/0 | 10000 | 10G:to_SBY-KEGE-OPT-H910C_Gi0/2/1:Via_OTB_7/8_IFORTE | -11.20 | -18.01 | up ✅\n▶️ 114.1.144.212 | SBY-PWON-OPT-H910C | GigabitEthernet0/2/2 | 10000 | 10G:to_SBY-KEGE-OPT-H910C_Gi0/2/3:Via_OTB_7/8_IFORTE | -40.00 | -18.01 | down ❌\n",
+    "timestamp": "12/5/2025, 14.11.08",
+    "duration": 19.962
+  },
+  {
+    "name": "SBY-JEIJ-EN1-H910D SBY-TMPK-OPT-H910D",
+    "ne1": "sby-jeij-en1-h910d",
+    "ne2": "sby-tmpk-opt-h910d",
+    "shortNe1": "jeij",
+    "shortNe2": "tmpk",
+    "result": "▶️ 114.15.34.15 | SBY-JEIJ-EN1-H910D | 25GE0/2/8 | 25000 | : 25G:to_SBY-TMPK-OPT-H910D_25GE0/2/8:Via_OTB_1/2_Alita | -6.32 | -13.29 | up ✅\n\n────────────\n▶️ 114.1.116.153 | SBY-TMPK-OPT-H910D | 25GE0/2/8 | 25000 | 25G:to_SBY-JEIJ-EN1-H910D_25GE0/2/8:via_OTB_1/2_Alita | -10.03 | -13.29 | up ✅\n",
+    "timestamp": "12/5/2025, 17.16.48",
+    "duration": 18.423
   }
 ]
