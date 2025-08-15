@@ -8,10 +8,7 @@ const HIGHER_IS_BETTER = process.env.RX_HIGHER_IS_BETTER !== 'false';
 function toUpperCaseNEName(neName) {
   return String(neName || '').toUpperCase();
 }
-function baseLabel(ne) {
-  const p = String(ne).split('-');
-  return p.length >= 2 ? `${p[0]}-${p[1]}` : String(ne);
-}
+
 function getRxLevelStatusEmoji(rxLevel, rxThreshold) {
   if (rxLevel === '-40.00') return '❌';
   const rx = Number(rxLevel);
@@ -20,6 +17,7 @@ function getRxLevelStatusEmoji(rxLevel, rxThreshold) {
   const ok = HIGHER_IS_BETTER ? (rx > thr) : (rx < thr);
   return ok ? '✅' : '⚠️';
 }
+
 async function launchBrowser() {
   return puppeteer.launch({
     headless: HEADLESS,
@@ -32,6 +30,7 @@ async function fetchRxTable(page, neName) {
   await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
     waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT
   });
+
   await page.type('input[name="nename"]', neName);
   await page.select('select[name="service"]', 'rx-level');
   await page.click('input[name="submit"]');
@@ -88,63 +87,40 @@ async function fetchRxTable(page, neName) {
   }
 }
 
-function filterOneSide(rows, A, B) {
-  const a = A.toLowerCase();
-  const b = B.toLowerCase();
-  return rows.filter((it) => {
-    const ne = String(it['NE Name'] || '').toLowerCase();
-    const desc = String(it['Description'] || '').toLowerCase();
-    const isFromA = ne.includes(a);
-    const touchesB = desc.includes(b) || ne.includes(b);
-    return isFromA && touchesB;
-  });
-}
-
-function formatLineHTML(it) {
-  const iface = it['Interface'] || 'N/A';
-  const rx = it['RX Level'] || 'N/A';
-  const thr = it['RX Threshold'] || 'N/A';
-  const oper = it['Oper Status'] || 'N/A';
-  const ip = it['NE IP'] || '';
-  const ipLink = ip ? `<a href="http://${ip}">${ip}</a>` : 'N/A';
-  const emoji = getRxLevelStatusEmoji(rx, thr);
-  return `• <b>${iface}</b> | RX <code>${rx}</code> | Thr <code>${thr}</code> | <i>${oper}</i> | ${ipLink} ${emoji}`;
-}
-
-function formatSideHTML(rows, labelA, labelB) {
-  if (!rows || !rows.length) return `<b>▶️ ${labelA} → ${labelB}</b>\n(i) tidak ada data relevan`;
-  return `<b>▶️ ${labelA} → ${labelB}</b>\n` + rows.map(formatLineHTML).join('\n');
+function formatResults(results) {
+  if (!results || !results.length) return '❌ Tidak ada data yang relevan';
+  return results.map((it) => {
+    const ip = it['NE IP'] || 'N/A';
+    const ne = it['NE Name'] || 'N/A';
+    const iface = it['Interface'] || 'N/A';
+    const spd = it['IF Speed'] || 'N/A';
+    const desc = it['Description'] || 'N/A';
+    const rx = it['RX Level'] || 'N/A';
+    const thr = it['RX Threshold'] || 'N/A';
+    const oper = it['Oper Status'] || 'N/A';
+    const emoji = getRxLevelStatusEmoji(rx, thr);
+    return `▶️ ${ip} | ${ne} | ${iface} | ${spd} | ${desc} | ${rx} | ${thr} | ${oper} ${emoji}`;
+  }).join('\n');
 }
 
 async function checkMetroStatus(neName1, neName2, options = {}) {
   const browser = options.browser || await launchBrowser();
-  const ownBrowser = !options.browser;
   const page = await browser.newPage();
+  const ownBrowser = !options.browser;
 
   try {
     const ne1 = toUpperCaseNEName(neName1);
     const ne2 = toUpperCaseNEName(neName2);
     const rows = await fetchRxTable(page, ne1);
 
-    const sideA = filterOneSide(rows, ne1, ne2);
-    // jika ingin fetch sisi B dari perspektif B, ganti 2 baris berikut:
-    const sideB = filterOneSide(rows, ne2, ne1);
-    // const rowsB = await fetchRxTable(page, ne2);
-    // const sideB = filterOneSide(rowsB, ne2, ne1);
+    const filtered = rows.filter((it) => {
+      const d = String(it['Description'] || '').toLowerCase();
+      const n = String(it['NE Name'] || '').toLowerCase();
+      return d.includes(ne1.toLowerCase()) || d.includes(ne2.toLowerCase()) ||
+             n.includes(ne1.toLowerCase()) || n.includes(ne2.toLowerCase());
+    });
 
-    const labelA = baseLabel(ne1);
-    const labelB = baseLabel(ne2);
-
-    if (options.returnStructured) {
-      return { sideA, sideB, labelA, labelB };
-    }
-
-    return [
-      formatSideHTML(sideA, labelA, labelB),
-      '────────────',
-      formatSideHTML(sideB, labelB, labelA)
-    ].join('\n');
-
+    return formatResults(filtered);
   } catch (err) {
     return `❌ Gagal memeriksa RX Level\nError: ${err.message}`;
   } finally {
@@ -155,4 +131,3 @@ async function checkMetroStatus(neName1, neName2, options = {}) {
 
 module.exports = checkMetroStatus;
 module.exports.launchBrowser = launchBrowser;
-module.exports._formatSideHTML = formatSideHTML;
