@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ====== KONFIGURASI ======
+# ====== KONFIG ======
 REPO_DIR="${HOME}/cekrsltele"
 BRANCH="main"
 REMOTE_SSH="git@github.com:nicolepell6969/cekrsltele.git"
+
+# pakai identitas yang kamu minta simpan
 GIT_NAME="nicolepell6969"
 GIT_EMAIL="ferenrezareynaldo5@gmail.com"
+
 SYSTEMD_SERVICE=""   # isi "cekrsltele" jika pakai systemd; kosongkan jika tidak
 PM2_NAME=""          # isi "cekrsltele" jika pakai PM2; kosongkan jika tidak
-# =========================
+# ====================
 
-echo "==> Masuk repo: $REPO_DIR"
+echo "==> cd $REPO_DIR"
 cd "$REPO_DIR"
 
-# Pastikan remote SSH benar
+# pastikan remote SSH
 if git remote -v | grep -q '^origin'; then
   git remote set-url origin "$REMOTE_SSH"
 else
   git remote add origin "$REMOTE_SSH"
 fi
 
-# Checkout branch
+# checkout/pull
 git fetch origin || true
 if git show-ref --verify --quiet "refs/heads/${BRANCH}"; then
   git checkout "$BRANCH"
@@ -30,22 +33,22 @@ else
 fi
 git pull --rebase origin "$BRANCH" || true
 
-# Backup file lama
+# backup
 TS="$(date +%Y%m%d-%H%M%S)"
 BKDIR=".backup-$TS"
 mkdir -p "$BKDIR"
 for f in bot.js checkMetroStatus.js; do
   [ -f "$f" ] && cp -f "$f" "$BKDIR/$f" || true
 done
-echo "==> Backup disimpan ke $BKDIR"
+echo "==> Backup ke $BKDIR"
 
-# Pastikan .gitignore aman
+# .gitignore aman
 grep -qxF "node_modules" .gitignore || echo "node_modules" >> .gitignore
 grep -qxF ".env" .gitignore || echo ".env" >> .gitignore
 grep -qxF "history.json" .gitignore || echo "history.json" >> .gitignore
 grep -qxF "npm-debug.log*" .gitignore || echo "npm-debug.log*" >> .gitignore
 
-# ============ TULIS checkMetroStatus.js (filter lawan di Description) ============
+# =================== tulis checkMetroStatus.js (plain text format) ===================
 cat > checkMetroStatus.js <<'EOF'
 const puppeteer = require('puppeteer');
 
@@ -156,20 +159,23 @@ function filterByOpponentDescription(rows, opponentBase) {
   });
 }
 
-function formatLineHTML(it) {
+// ---- formatter PLAIN TEXT (tanpa HTML) ----
+function formatLinePlain(it) {
+  const ip = it['NE IP'] || 'N/A';
+  const neName = it['NE Name'] || 'N/A';
   const iface = it['Interface'] || 'N/A';
+  const ifSpeed = it['IF Speed'] || 'N/A';
+  const desc = it['Description'] || 'N/A';
   const rx = it['RX Level'] || 'N/A';
   const thr = it['RX Threshold'] || 'N/A';
   const oper = it['Oper Status'] || 'N/A';
-  const ip = it['NE IP'] || '';
-  const ipLink = ip ? `<a href="http://${ip}">${ip}</a>` : 'N/A';
   const emoji = getRxLevelStatusEmoji(rx, thr);
-  return `• <b>${iface}</b> | RX <code>${rx}</code> | Thr <code>${thr}</code> | <i>${oper}</i> | ${ipLink} ${emoji}`;
+  return `▶️ ${ip} | ${neName} | ${iface} | ${ifSpeed} | ${desc} | ${rx} | ${thr} | ${oper} ${emoji}`;
 }
 
-function formatSideHTML(rows, labelA, labelB) {
-  if (!rows || !rows.length) return `<b>▶️ ${labelA} → ${labelB}</b>\n(i) tidak ada data relevan`;
-  return `<b>▶️ ${labelA} → ${labelB}</b>\n` + rows.map(formatLineHTML).join('\n');
+function formatSidePlain(rows, labelA, labelB) {
+  if (!rows || !rows.length) return `▶️ ${labelA} → ${labelB}\n(i) tidak ada data relevan`;
+  return `▶️ ${labelA} → ${labelB}\n` + rows.map(formatLinePlain).join('\n');
 }
 
 async function checkMetroStatus(neName1, neName2, options = {}) {
@@ -198,9 +204,9 @@ async function checkMetroStatus(neName1, neName2, options = {}) {
     }
 
     return [
-      formatSideHTML(sideA, baseA, baseB),
+      formatSidePlain(sideA, baseA, baseB),
       '────────────',
-      formatSideHTML(sideB, baseB, baseA)
+      formatSidePlain(sideB, baseB, baseA)
     ].join('\n');
 
   } catch (err) {
@@ -213,12 +219,12 @@ async function checkMetroStatus(neName1, neName2, options = {}) {
 
 module.exports = checkMetroStatus;
 module.exports.launchBrowser = launchBrowser;
-module.exports._formatSideHTML = formatSideHTML;
+module.exports._formatSidePlain = formatSidePlain;
 module.exports._baseLabel = baseLabel;
 module.exports._filterByOpponentDescription = filterByOpponentDescription;
 EOF
 
-# ================= TULIS bot.js (hapus 'tampilkan semua', tambah 'cek ulang') =================
+# ===================== tulis bot.js (tanpa HTML, tombol cek ulang) =====================
 cat > bot.js <<'EOF'
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
@@ -284,21 +290,19 @@ bot.on('message', async (msg) => {
     }
     const [ne1, ne2] = args;
     const name = `${ne1} ${ne2}`;
-    await bot.sendMessage(msg.chat.id, '🔄 Mengecek dua sisi, mohon tunggu…', { disable_web_page_preview: true });
+    await bot.sendMessage(msg.chat.id, '🔄 Mengecek dua sisi, mohon tunggu…');
 
     const start = Date.now();
     const browser = await launchBrowser();
     try {
-      // checkMetroStatus akan balas HTML ringkas (kedua sisi)
-      const html = await checkMetroStatus(ne1, ne2, { browser, returnStructured: false });
+      const textOut = await checkMetroStatus(ne1, ne2, { browser, returnStructured: false });
       const end = Date.now();
 
-      addHistory(ne1, ne2, html, name, start, end);
+      addHistory(ne1, ne2, textOut, name, start, end);
 
       await bot.sendMessage(
         msg.chat.id,
-        `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${html}`,
-        { parse_mode: 'HTML', disable_web_page_preview: true }
+        `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`
       );
     } catch (e) {
       console.error(e);
@@ -336,15 +340,14 @@ bot.on('callback_query', async (q) => {
       const i = Number(data.split('_')[1]);
       const e = history[i];
       if (!e) return;
-      await bot.sendMessage(message.chat.id, `🔄 Cek ulang: ${e.ne1} ↔ ${e.ne2}…`, { disable_web_page_preview: true });
+      await bot.sendMessage(message.chat.id, `🔄 Cek ulang: ${e.ne1} ↔ ${e.ne2}…`);
       const browser = await launchBrowser();
       try {
-        const html = await checkMetroStatus(e.ne1, e.ne2, { browser, returnStructured: false });
+        const textOut = await checkMetroStatus(e.ne1, e.ne2, { browser, returnStructured: false });
         const end = Date.now();
         await bot.sendMessage(
           message.chat.id,
-          `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${html}`,
-          { parse_mode: 'HTML', disable_web_page_preview: true }
+          `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`
         );
       } finally {
         await browser.close().catch(() => {});
@@ -369,20 +372,20 @@ EOF
 echo "==> npm install (sinkron lockfile)…"
 npm install
 
-# Set identitas git lokal bila belum
+# set identitas git
 git config user.name >/dev/null 2>&1 || git config user.name "$GIT_NAME"
 git config user.email >/dev/null 2>&1 || git config user.email "$GIT_EMAIL"
 
-# Pastikan node_modules tidak ikut
+# pastikan node_modules tidak ikut
 git rm -r --cached node_modules >/dev/null 2>&1 || true
 
-echo "==> Commit & push…"
+echo '==> Commit & push…'
 git add -A
-git commit -m "feat: remove 'tampilkan semua'; add 'cek ulang' via /history; filter Description=opponent base" || true
+git commit -m "feat: output plain text format; keep 2-side check + retry buttons; filter Description by opponent base" || true
 git branch -M "$BRANCH"
 git push -u origin "$BRANCH"
 
-# Restart service jika diset
+# restart service jika diisi
 if [[ -n "${SYSTEMD_SERVICE}" ]]; then
   echo "==> Restart systemd service: ${SYSTEMD_SERVICE}"
   sudo systemctl daemon-reload || true
@@ -395,4 +398,4 @@ if [[ -n "${PM2_NAME}" ]]; then
   fi
 fi
 
-echo "✅ Selesai. File diperbarui & dipush. Coba perintah /cek lalu /history untuk cek ulang."
+echo "✅ Selesai. Format output kini plain text persis contohmu & sudah ter-push."	
