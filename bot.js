@@ -11,10 +11,7 @@ const bot = new TelegramBot(token, { polling: true });
 const historyFilePath = './history.json';
 const MAX_HISTORY = 50;
 
-// ====== cache untuk tombol "Cek ulang" ======
-const retryCache = new Map(); // key -> { ne1, ne2, ts }
-const RETRY_TTL_MS = 10 * 60 * 1000; // 10 menit
-
+/* ===================== HISTORY ===================== */
 let history = [];
 try {
   if (fs.existsSync(historyFilePath)) {
@@ -28,16 +25,13 @@ function writeHistory() {
   try { fs.writeFileSync(historyFilePath, JSON.stringify(history, null, 2), 'utf8'); }
   catch (e) { console.error('Gagal simpan history:', e.message); }
 }
-
 function safeShort(ne) {
   const parts = String(ne).split('-'); const mid = parts.length > 1 ? parts[1] : parts[0];
   return (mid || '').slice(0, 4) || ne.slice(0, 4);
 }
-
 function isDuplicate(ne1, ne2) {
   return history.some(h => (h.ne1 === ne1 && h.ne2 === ne2) || (h.ne1 === ne2 && h.ne2 === ne1));
 }
-
 function addHistory(ne1, ne2, result, name, startTime, endTime) {
   if (isDuplicate(ne1, ne2)) return;
   const duration = ((endTime || Date.now()) - startTime) / 1000;
@@ -46,29 +40,60 @@ function addHistory(ne1, ne2, result, name, startTime, endTime) {
   if (history.length > MAX_HISTORY) history = history.slice(-MAX_HISTORY);
   writeHistory();
 }
-
-function cleanupRetryCache() {
-  const now = Date.now();
-  for (const [k, v] of retryCache.entries()) {
-    if (now - (v.ts || 0) > RETRY_TTL_MS) retryCache.delete(k);
-  }
+function buildHistoryKeyboard() {
+  return history.map((e, i) => ([
+    { text: `🔄 Cek ulang ${e.shortNe1} ↔ ${e.shortNe2}`, callback_data: `retry_${i}` },
+    { text: `🗑️ Hapus ${e.shortNe1} ↔ ${e.shortNe2}`, callback_data: `delete_${i}` }
+  ]));
 }
 
-function buildRetryButtons(tokenKey) {
+/* =========== Auto-extract NE dari teks bebas =========== */
+/* Pola NE: huruf/angka dengan dash, >= 3 segmen — contoh: SBY-PRDU-OPT-H910D */
+const NE_REGEX = /\b([A-Z]{2,}-[A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){1,})\b/g;
+
+function extractNEs(raw) {
+  if (!raw) return [];
+  const text = String(raw).toUpperCase();
+
+  // Utamakan yang muncul sebagai NE[...]
+  const inBracket = Array.from(text.matchAll(/NE\[(.*?)\]/g))
+    .map(m => m[1].trim().toUpperCase())
+    .filter(Boolean);
+
+  // Tangkap pola umum di seluruh teks
+  const all = Array.from(text.matchAll(NE_REGEX))
+    .map(m => m[1].trim().toUpperCase());
+
+  // Gabungkan (prioritas inBracket), lalu unik
+  const merged = [...inBracket, ...all];
+  const unique = [];
+  for (const s of merged) if (!unique.includes(s)) unique.push(s);
+  return unique;
+}
+function baseKey(ne) {
+  const parts = ne.split('-'); return parts[1] || ne;
+}
+function sortNEPair([a, b]) {
+  if (!a || !b) return [a, b];
+  return baseKey(a) <= baseKey(b) ? [a, b] : [b, a];
+}
+
+/* ===================== UI helpers ===================== */
+function makeRerunButtons(ne1, ne2) {
   return {
     reply_markup: {
-      inline_keyboard: [
-        [{ text: '🔄 Cek ulang', callback_data: `rerun_${tokenKey}` }]
-      ]
+      inline_keyboard: [[{ text: '🔄 Cek ulang', callback_data: `rerun_${ne1}__${ne2}` }]]
     }
   };
 }
 
+/* ===================== Message Handler ===================== */
 bot.on('message', async (msg) => {
   if (!msg.text) return;
   const text = msg.text.trim();
   const lower = text.toLowerCase();
 
+  // /cek NE1 NE2
   if (lower.startsWith('/cek ')) {
     const args = text.split(' ').slice(1).map(s => s.trim()).filter(Boolean);
     if (args.length !== 2) {
@@ -83,18 +108,11 @@ bot.on('message', async (msg) => {
     try {
       const textOut = await checkMetroStatus(ne1, ne2, { browser, returnStructured: false });
       const end = Date.now();
-
       addHistory(ne1, ne2, textOut, name, start, end);
-
-      // simpan pair NE untuk tombol "Cek ulang"
-      cleanupRetryCache();
-      const tokenKey = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      retryCache.set(tokenKey, { ne1, ne2, ts: Date.now() });
-
       await bot.sendMessage(
         msg.chat.id,
         `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`,
-        buildRetryButtons(tokenKey)
+        makeRerunButtons(ne1, ne2)
       );
     } catch (e) {
       console.error(e);
@@ -105,56 +123,64 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // /history
   if (lower === '/history') {
     if (!history.length) return bot.sendMessage(msg.chat.id, '❌ Belum ada riwayat pengecekan.');
     return bot.sendMessage(msg.chat.id, '👉 Pilih aksi untuk riwayat:', {
-      reply_markup: {
-        inline_keyboard: history.map((e, i) => ([
-          { text: `🔄 Cek ulang ${e.shortNe1} ↔ ${e.shortNe2}`, callback_data: `retry_${i}` },
-          { text: `🗑️ Hapus ${e.shortNe1} ↔ ${e.shortNe2}`, callback_data: `delete_${i}` }
-        ]))
-      }
+      reply_markup: { inline_keyboard: buildHistoryKeyboard() }
     });
   }
 
+  // /start | /help
   if (lower === '/start' || lower === '/help') {
     return bot.sendMessage(msg.chat.id, [
       'Hai! 👋',
       'Perintah:',
-      '• /cek NE1 NE2  → cek dua arah (filter Description = base lawan) + tombol Cek ulang',
-      '• /history      → cek ulang / hapus riwayat'
+      '• /cek NE1 NE2  → cek dua arah (Description mengandung base lawan) + tombol Cek ulang',
+      '• /history      → cek ulang / hapus riwayat',
+      '• Kirim teks bebas dengan dua NE (mis. hasil diagnosis) → bot akan kasih command /cek + tombol Jalankan'
     ].join('\n'));
   }
 
+  // Teks bebas → auto deteksi 2 NE → saran command /cek + tombol Jalankan
+  const candidates = extractNEs(text);
+  if (candidates.length >= 2) {
+    const [ne1, ne2] = sortNEPair([candidates[0], candidates[1]]);
+    const cmd = `/cek ${ne1} ${ne2}`;
+    return bot.sendMessage(msg.chat.id, [
+      '🔗 Terdeteksi 2 NE dari teks kamu.',
+      'Command siap copy‑paste:',
+      cmd
+    ].join('\n'), {
+      reply_markup: {
+        inline_keyboard: [[{ text: '🚀 Jalankan sekarang', callback_data: `run_${ne1}__${ne2}` }]]
+      }
+    });
+  }
+
+  // default
   return bot.sendMessage(msg.chat.id, '👍');
 });
 
+/* ===================== Callback Buttons ===================== */
 bot.on('callback_query', async (q) => {
   const { data, message } = q;
   await bot.answerCallbackQuery(q.id, { show_alert: false }).catch(() => {});
   try {
-    // Tombol "Cek ulang" yang ada di bawah hasil /cek
-    if (data.startsWith('rerun_')) {
-      const tokenKey = data.slice('rerun_'.length);
-      const entry = retryCache.get(tokenKey);
-      if (!entry) return bot.sendMessage(message.chat.id, '⚠️ Data tombol sudah kedaluwarsa. Jalankan /cek lagi.');
-
-      const { ne1, ne2 } = entry;
-      await bot.sendMessage(message.chat.id, `🔄 Cek ulang: ${ne1} ↔ ${ne2}…`);
+    // Jalankan sekarang dari saran teks bebas
+    if (data.startsWith('run_')) {
+      const payload = data.slice(4);
+      const [ne1, ne2] = payload.split('__');
+      if (!ne1 || !ne2) return bot.sendMessage(message.chat.id, '⚠️ Format NE tidak valid.');
+      await bot.sendMessage(message.chat.id, `🔄 Menjalankan: ${ne1} ↔ ${ne2}…`);
       const browser = await launchBrowser();
       try {
         const textOut = await checkMetroStatus(ne1, ne2, { browser, returnStructured: false });
         const end = Date.now();
-
-        // buat token baru untuk tombol berikutnya
-        cleanupRetryCache();
-        const newToken = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        retryCache.set(newToken, { ne1, ne2, ts: Date.now() });
-
         await bot.sendMessage(
           message.chat.id,
           `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`,
-          buildRetryButtons(newToken)
+          makeRerunButtons(ne1, ne2)
         );
       } finally {
         await browser.close().catch(() => {});
@@ -162,7 +188,28 @@ bot.on('callback_query', async (q) => {
       return;
     }
 
-    // Tombol dari menu /history
+    // Cek ulang dari hasil /cek
+    if (data.startsWith('rerun_')) {
+      const payload = data.slice(6);
+      const [ne1, ne2] = payload.split('__');
+      if (!ne1 || !ne2) return;
+      await bot.sendMessage(message.chat.id, `🔄 Cek ulang: ${ne1} ↔ ${ne2}…`);
+      const browser = await launchBrowser();
+      try {
+        const textOut = await checkMetroStatus(ne1, ne2, { browser, returnStructured: false });
+        const end = Date.now();
+        await bot.sendMessage(
+          message.chat.id,
+          `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`,
+          makeRerunButtons(ne1, ne2)
+        );
+      } finally {
+        await browser.close().catch(() => {});
+      }
+      return;
+    }
+
+    // Dari menu history
     if (data.startsWith('retry_')) {
       const i = Number(data.split('_')[1]);
       const e = history[i];
@@ -172,15 +219,10 @@ bot.on('callback_query', async (q) => {
       try {
         const textOut = await checkMetroStatus(e.ne1, e.ne2, { browser, returnStructured: false });
         const end = Date.now();
-        // siapkan tombol "cek ulang" langsung di hasil ini juga
-        cleanupRetryCache();
-        const tokenKey = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        retryCache.set(tokenKey, { ne1: e.ne1, ne2: e.ne2, ts: Date.now() });
-
         await bot.sendMessage(
           message.chat.id,
           `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`,
-          buildRetryButtons(tokenKey)
+          makeRerunButtons(e.ne1, e.ne2)
         );
       } finally {
         await browser.close().catch(() => {});
