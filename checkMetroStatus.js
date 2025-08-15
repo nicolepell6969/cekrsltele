@@ -1,163 +1,133 @@
 const puppeteer = require('puppeteer');
 
-// Fungsi untuk mengubah NE Name menjadi kapital
+const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || null;
+const PAGE_TIMEOUT = Number(process.env.PAGE_TIMEOUT_MS || 60000);
+const HEADLESS = process.env.HEADLESS !== 'false';
+const HIGHER_IS_BETTER = process.env.RX_HIGHER_IS_BETTER !== 'false';
+
 function toUpperCaseNEName(neName) {
-    return neName.toUpperCase();
+  return String(neName || '').toUpperCase();
 }
 
-// Fungsi untuk mendapatkan emoji status RX Level
 function getRxLevelStatusEmoji(rxLevel, rxThreshold) {
-    if (rxLevel === '-40.00') {
-        return '❌'; // RX Level -40 dBm berarti ada error atau masalah
-    }
+  if (rxLevel === '-40.00') return '❌';
+  const rx = Number(rxLevel);
+  const thr = Number(rxThreshold);
+  if (Number.isNaN(rx) || Number.isNaN(thr)) return '❓';
+  const ok = HIGHER_IS_BETTER ? (rx > thr) : (rx < thr);
+  return ok ? '✅' : '⚠️';
+}
 
-    const rxValue = parseFloat(rxLevel);
-    const thresholdValue = parseFloat(rxThreshold);
-    
-    if (rxValue > thresholdValue) {
-        return '✅'; // Status stabil karena di bawah threshold
-    }
-    
-    return '⚠️'; // Status tidak stabil karena di atas threshold
+async function launchBrowser() {
+  return puppeteer.launch({
+    headless: HEADLESS,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: PUPPETEER_EXECUTABLE_PATH || undefined
+  });
+}
+
+async function fetchRxTable(page, neName) {
+  await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
+    waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT
+  });
+
+  await page.type('input[name="nename"]', neName);
+  await page.select('select[name="service"]', 'rx-level');
+  await page.click('input[name="submit"]');
+
+  await page.waitForSelector('iframe#myIframe', { timeout: 10000 });
+  const frameUrl = await page.evaluate(() => {
+    const i = document.querySelector('iframe#myIframe');
+    return i && i.src ? i.src : null;
+  });
+  if (!frameUrl) throw new Error('Frame URL tidak ditemukan');
+
+  const resPage = await page.browser().newPage();
+  try {
+    await resPage.goto(frameUrl, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT });
+
+    const rows = await resPage.evaluate(() => {
+      const wanted = ['NE Name', 'Description', 'RX Level', 'RX Threshold', 'Oper Status', 'Interface', 'IF Speed', 'NE IP'];
+      const tables = Array.from(document.querySelectorAll('table'));
+      if (!tables.length) return [];
+
+      let best = { score: -1, table: null };
+      for (const t of tables) {
+        const headers = Array.from(t.querySelectorAll('th,td')).map(c => c.textContent.trim().toLowerCase());
+        const score = wanted.reduce((s, w) => s + (headers.some(h => h.includes(w.toLowerCase())) ? 1 : 0), 0);
+        if (score > best.score) best = { score, table: t };
+      }
+      if (!best.table) return [];
+
+      const headerRow = best.table.querySelector('tr');
+      const headerCells = headerRow ? Array.from(headerRow.children) : [];
+      const colIndex = {};
+      headerCells.forEach((cell, i) => {
+        const txt = cell.textContent.trim().toLowerCase();
+        wanted.forEach((w) => { if (txt.includes(w.toLowerCase())) colIndex[w] = i; });
+      });
+
+      const data = [];
+      const trs = Array.from(best.table.querySelectorAll('tr')).slice(1);
+      for (const tr of trs) {
+        const tds = Array.from(tr.querySelectorAll('td'));
+        if (!tds.length) continue;
+        const row = {};
+        Object.entries(colIndex).forEach(([name, idx]) => {
+          if (idx < tds.length) row[name] = tds[idx].textContent.trim();
+        });
+        if (Object.keys(row).length) data.push(row);
+      }
+      return data;
+    });
+
+    return rows;
+  } finally {
+    await resPage.close().catch(() => {});
+  }
+}
+
+function formatResults(results) {
+  if (!results || !results.length) return '❌ Tidak ada data yang relevan';
+  return results.map((it) => {
+    const ip = it['NE IP'] || 'N/A';
+    const ne = it['NE Name'] || 'N/A';
+    const iface = it['Interface'] || 'N/A';
+    const spd = it['IF Speed'] || 'N/A';
+    const desc = it['Description'] || 'N/A';
+    const rx = it['RX Level'] || 'N/A';
+    const thr = it['RX Threshold'] || 'N/A';
+    const oper = it['Oper Status'] || 'N/A';
+    const emoji = getRxLevelStatusEmoji(rx, thr);
+    return `▶️ ${ip} | ${ne} | ${iface} | ${spd} | ${desc} | ${rx} | ${thr} | ${oper} ${emoji}`;
+  }).join('\n');
 }
 
 async function checkMetroStatus(neName1, neName2, options = {}) {
-  const mode = options.mode || 'normal'; // 'normal', 'summary', 'full', 'with_opposite'
-  
-  const browser = await puppeteer.launch({ 
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
+  const browser = options.browser || await launchBrowser();
   const page = await browser.newPage();
+  const ownBrowser = !options.browser;
 
   try {
-    // Ubah NE Name menjadi kapital sebelum dikirim
-    neName1 = toUpperCaseNEName(neName1);
-    neName2 = toUpperCaseNEName(neName2);
+    const ne1 = toUpperCaseNEName(neName1);
+    const ne2 = toUpperCaseNEName(neName2);
+    const rows = await fetchRxTable(page, ne1);
 
-    console.log(`Mengakses halaman web untuk NE: ${neName1} dan ${neName2}...`);
-    await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000
+    const filtered = rows.filter((it) => {
+      const d = String(it['Description'] || '').toLowerCase();
+      const n = String(it['NE Name'] || '').toLowerCase();
+      return d.includes(ne1.toLowerCase()) || d.includes(ne2.toLowerCase()) ||
+             n.includes(ne1.toLowerCase()) || n.includes(ne2.toLowerCase());
     });
 
-    // Isi formulir dengan NE pertama
-    await page.type('input[name="nename"]', neName1);
-    await page.select('select[name="service"]', 'rx-level');
-    await page.click('input[name="submit"]');
-    
-    // Tunggu iframe untuk memuat hasil
-    await page.waitForSelector('iframe#myIframe', { timeout: 10000 });
-    
-    // Dapatkan URL iframe dan buka untuk memuat hasil
-    const frameUrl = await page.evaluate(() => {
-      const iframe = document.querySelector('iframe#myIframe');
-      return iframe ? iframe.src : null;
-    });
-
-    const framePage = await browser.newPage();
-    await framePage.goto(frameUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-
-    // Ambil data dari tabel yang ada di halaman iframe
-    const result = await framePage.evaluate(() => {
-      const tables = document.querySelectorAll('table');
-      if (tables.length === 0) return [];
-
-      let allResults = [];
-      const wantedColumns = ['NE Name', 'Description', 'RX Level', 'RX Threshold', 'Oper Status', 'Interface', 'IF Speed', 'NE IP'];
-
-      for (const table of tables) {
-        const rows = table.querySelectorAll('tr');
-        let columnIndices = {};
-        let headerRow = null;
-        
-        for (const row of rows) {
-          const cells = row.querySelectorAll('th, td');
-          if (cells.length > 0) {
-            for (let i = 0; i < cells.length; i++) {
-              const cellText = cells[i].textContent.trim();
-              wantedColumns.forEach(col => {
-                if (cellText.toLowerCase().includes(col.toLowerCase())) {
-                  columnIndices[col] = i;
-                  headerRow = row;
-                }
-              });
-            }
-            
-            if (Object.keys(columnIndices).length > 0) {
-              break;
-            }
-          }
-        }
-        
-        if (Object.keys(columnIndices).length === 0) continue;
-        
-        for (const row of rows) {
-          if (row === headerRow) continue;
-          
-          const cells = row.querySelectorAll('td');
-          if (cells.length > 0) {
-            let rowData = {};
-            let hasData = false;
-            
-            for (const [colName, colIndex] of Object.entries(columnIndices)) {
-              if (colIndex < cells.length) {
-                const value = cells[colIndex].textContent.trim();
-                if (value) {
-                  rowData[colName] = value;
-                  hasData = true;
-                }
-              }
-            }
-            
-            if (hasData) {
-              rowData['IP Address'] = rowData['IP Address'] || 'N/A';
-              rowData['Port'] = rowData['Port'] || 'N/A';
-              rowData['TX Level'] = rowData['TX Level'] || 'N/A';
-              rowData['Connection'] = rowData['Connection'] || 'N/A';
-              allResults.push(rowData);
-            }
-          }
-        }
-      }
-      
-      return allResults;
-    });
-
-    // Filter hasil yang relevan berdasarkan Description
-    const filteredResults = result.filter(item => {
-      const description = item['Description'] || '';
-      return description.includes(neName1) || description.includes(neName2);
-    });
-
-    console.log(`Hasil yang relevan: ${filteredResults.length} entri`);
-
-    await browser.close();
-
-    // Format hasil sesuai dengan yang diinginkan
-    return formatResults(filteredResults);
-
-  } catch (error) {
-    console.error(`Error: ${error.message}`);
-    await browser.close();
-    return `❌ Gagal memeriksa RX Level\nError: ${error.message}`;
+    return formatResults(filtered);
+  } catch (err) {
+    return `❌ Gagal memeriksa RX Level\nError: ${err.message}`;
+  } finally {
+    await page.close().catch(() => {});
+    if (ownBrowser) await browser.close().catch(() => {});
   }
 }
 
-// Fungsi untuk memformat hasil menjadi lebih mudah dibaca
-function formatResults(results) {
-  if (results.length === 0) {
-    return `❌ Tidak ada data yang relevan`;
-  }
-
-  let formattedResult = '';
-  results.forEach((item) => {
-    const rxLevelStatusEmoji = getRxLevelStatusEmoji(item['RX Level'], item['RX Threshold']);
-    formattedResult += `▶️ ${item['NE IP']} | ${item['NE Name']} | ${item['Interface']} | ${item['IF Speed']} | ${item['Description']} | ${item['RX Level']} | ${item['RX Threshold']} | ${item['Oper Status']} ${rxLevelStatusEmoji}\n`;
-  });
-
-  return formattedResult;
-}
-
-// Ekspor fungsi checkMetroStatus agar bisa digunakan di file lain
 module.exports = checkMetroStatus;
+module.exports.launchBrowser = launchBrowser;
