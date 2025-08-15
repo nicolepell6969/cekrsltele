@@ -8,10 +8,13 @@ const HIGHER_IS_BETTER = process.env.RX_HIGHER_IS_BETTER !== 'false';
 function toUpperCaseNEName(neName) {
   return String(neName || '').toUpperCase();
 }
+
+// Ambil base label seperti "SBY-GDK" dari "SBY-GDK-EN1-H8M14"
 function baseLabel(ne) {
   const p = String(ne).split('-');
   return p.length >= 2 ? `${p[0]}-${p[1]}` : String(ne);
 }
+
 function getRxLevelStatusEmoji(rxLevel, rxThreshold) {
   if (rxLevel === '-40.00') return '❌';
   const rx = Number(rxLevel);
@@ -20,6 +23,7 @@ function getRxLevelStatusEmoji(rxLevel, rxThreshold) {
   const ok = HIGHER_IS_BETTER ? (rx > thr) : (rx < thr);
   return ok ? '✅' : '⚠️';
 }
+
 async function launchBrowser() {
   return puppeteer.launch({
     headless: HEADLESS,
@@ -32,6 +36,7 @@ async function fetchRxTable(page, neName) {
   await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
     waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT
   });
+
   await page.type('input[name="nename"]', neName);
   await page.select('select[name="service"]', 'rx-level');
   await page.click('input[name="submit"]');
@@ -88,15 +93,14 @@ async function fetchRxTable(page, neName) {
   }
 }
 
-function filterOneSide(rows, A, B) {
-  const a = A.toLowerCase();
-  const b = B.toLowerCase();
-  return rows.filter((it) => {
-    const ne = String(it['NE Name'] || '').toLowerCase();
-    const desc = String(it['Description'] || '').toLowerCase();
-    const isFromA = ne.includes(a);
-    const touchesB = desc.includes(b) || ne.includes(b);
-    return isFromA && touchesB;
+/** Filter berdasarkan base label (SBY-XXX) */
+function filterByBase(rows, base) {
+  const b = String(base).toLowerCase();
+  return (rows || []).filter((it) => {
+    const ne   = String(it['NE Name']    || '').toLowerCase();
+    const desc = String(it['Description']|| '').toLowerCase();
+    const iface= String(it['Interface']  || '').toLowerCase();
+    return ne.includes(b) || desc.includes(b) || iface.includes(b);
   });
 }
 
@@ -124,25 +128,25 @@ async function checkMetroStatus(neName1, neName2, options = {}) {
   try {
     const ne1 = toUpperCaseNEName(neName1);
     const ne2 = toUpperCaseNEName(neName2);
-    const rows = await fetchRxTable(page, ne1);
 
-    const sideA = filterOneSide(rows, ne1, ne2);
-    // jika ingin fetch sisi B dari perspektif B, ganti 2 baris berikut:
-    const sideB = filterOneSide(rows, ne2, ne1);
-    // const rowsB = await fetchRxTable(page, ne2);
-    // const sideB = filterOneSide(rowsB, ne2, ne1);
+    const baseA = baseLabel(ne1);
+    const baseB = baseLabel(ne2);
 
-    const labelA = baseLabel(ne1);
-    const labelB = baseLabel(ne2);
+    // Ambil dari perspektif masing-masing sisi untuk akurasi
+    const rowsA = await fetchRxTable(page, ne1);
+    const rowsB = await fetchRxTable(page, ne2);
+
+    const sideA = filterByBase(rowsA, baseA);  // hanya baris yang mengandung "SBY-GDK"
+    const sideB = filterByBase(rowsB, baseB);  // hanya baris yang mengandung "SBY-BDKL"
 
     if (options.returnStructured) {
-      return { sideA, sideB, labelA, labelB };
+      return { sideA, sideB, labelA: baseA, labelB: baseB };
     }
 
     return [
-      formatSideHTML(sideA, labelA, labelB),
+      formatSideHTML(sideA, baseA, baseB),
       '────────────',
-      formatSideHTML(sideB, labelB, labelA)
+      formatSideHTML(sideB, baseB, baseA)
     ].join('\n');
 
   } catch (err) {
@@ -156,3 +160,4 @@ async function checkMetroStatus(neName1, neName2, options = {}) {
 module.exports = checkMetroStatus;
 module.exports.launchBrowser = launchBrowser;
 module.exports._formatSideHTML = formatSideHTML;
+module.exports._baseLabel = baseLabel;

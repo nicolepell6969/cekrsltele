@@ -11,7 +11,7 @@ const bot = new TelegramBot(token, { polling: true });
 const historyFilePath = './history.json';
 const MAX_HISTORY = 50;
 
-const previewCache = new Map();
+const previewCache = new Map(); // token -> {sideA, sideB, labelA, labelB, chatId, ts}
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 menit
 
 let history = [];
@@ -55,9 +55,10 @@ function makePreviewHTML(sideRows, labelA, labelB, limit = 5) {
     const ip = r['NE IP'] || '';
     const link = ip ? `<a href="http://${ip}">${ip}</a>` : 'N/A';
     const rxNum = Number(rx), thrNum = Number(thr);
-    const emoji = (rx === '-40.00') ? '❌'
+    const higherIsBetter = process.env.RX_HIGHER_IS_BETTER !== 'false';
+    const emoji = (r['RX Level'] === '-40.00') ? '❌'
       : (Number.isNaN(rxNum) || Number.isNaN(thrNum)) ? '❓'
-      : ((process.env.RX_HIGHER_IS_BETTER !== 'false') ? (rxNum > thrNum) : (rxNum < thrNum)) ? '✅' : '⚠️';
+      : (higherIsBetter ? (rxNum > thrNum) : (rxNum < thrNum)) ? '✅' : '⚠️';
     return `• <b>${iface}</b> | RX <code>${rx}</code> | Thr <code>${thr}</code> | <i>${oper}</i> | ${link} ${emoji}`;
   }).join('\n');
   return `${head}\n${body}`;
@@ -99,9 +100,9 @@ bot.on('message', async (msg) => {
       const tokenKey = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       previewCache.set(tokenKey, { sideA, sideB, labelA, labelB, chatId: msg.chat.id, ts: Date.now() });
 
-      // auto-bersihkan cache lama
+      // bersihkan cache lama
       for (const [k, v] of previewCache.entries()) {
-        if (Date.now() - (v.ts || 0) > 10 * 60 * 1000) previewCache.delete(k);
+        if (Date.now() - (v.ts || 0) > CACHE_TTL_MS) previewCache.delete(k);
       }
 
       const previewA = makePreviewHTML(sideA, labelA, labelB, 5);
@@ -159,8 +160,6 @@ bot.on('callback_query', async (q) => {
 
       return bot.sendMessage(message.chat.id, html, { parse_mode: 'HTML', disable_web_page_preview: true });
     }
-
-    // (opsional) handler retry/delete lama dapat ditambahkan kembali di sini
   } catch (e) {
     await bot.answerCallbackQuery(q.id, { text: '❌ Terjadi kesalahan. Coba lagi.', show_alert: true });
   }
