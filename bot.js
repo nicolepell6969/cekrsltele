@@ -62,21 +62,19 @@ bot.on('message', async (msg) => {
     }
     const [ne1, ne2] = args;
     const name = `${ne1} ${ne2}`;
-    await bot.sendMessage(msg.chat.id, '🔄 Mengecek dua sisi, mohon tunggu…', { disable_web_page_preview: true });
+    await bot.sendMessage(msg.chat.id, '🔄 Mengecek dua sisi, mohon tunggu…');
 
     const start = Date.now();
     const browser = await launchBrowser();
     try {
-      // checkMetroStatus akan balas HTML ringkas (kedua sisi)
-      const html = await checkMetroStatus(ne1, ne2, { browser, returnStructured: false });
+      const textOut = await checkMetroStatus(ne1, ne2, { browser, returnStructured: false });
       const end = Date.now();
 
-      addHistory(ne1, ne2, html, name, start, end);
+      addHistory(ne1, ne2, textOut, name, start, end);
 
       await bot.sendMessage(
         msg.chat.id,
-        `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${html}`,
-        { parse_mode: 'HTML', disable_web_page_preview: true }
+        `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`
       );
     } catch (e) {
       console.error(e);
@@ -114,15 +112,14 @@ bot.on('callback_query', async (q) => {
       const i = Number(data.split('_')[1]);
       const e = history[i];
       if (!e) return;
-      await bot.sendMessage(message.chat.id, `🔄 Cek ulang: ${e.ne1} ↔ ${e.ne2}…`, { disable_web_page_preview: true });
+      await bot.sendMessage(message.chat.id, `🔄 Cek ulang: ${e.ne1} ↔ ${e.ne2}…`);
       const browser = await launchBrowser();
       try {
-        const html = await checkMetroStatus(e.ne1, e.ne2, { browser, returnStructured: false });
+        const textOut = await checkMetroStatus(e.ne1, e.ne2, { browser, returnStructured: false });
         const end = Date.now();
         await bot.sendMessage(
           message.chat.id,
-          `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${html}`,
-          { parse_mode: 'HTML', disable_web_page_preview: true }
+          `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`
         );
       } finally {
         await browser.close().catch(() => {});

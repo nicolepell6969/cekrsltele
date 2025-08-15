@@ -107,20 +107,23 @@ function filterByOpponentDescription(rows, opponentBase) {
   });
 }
 
-function formatLineHTML(it) {
+// ---- formatter PLAIN TEXT (tanpa HTML) ----
+function formatLinePlain(it) {
+  const ip = it['NE IP'] || 'N/A';
+  const neName = it['NE Name'] || 'N/A';
   const iface = it['Interface'] || 'N/A';
+  const ifSpeed = it['IF Speed'] || 'N/A';
+  const desc = it['Description'] || 'N/A';
   const rx = it['RX Level'] || 'N/A';
   const thr = it['RX Threshold'] || 'N/A';
   const oper = it['Oper Status'] || 'N/A';
-  const ip = it['NE IP'] || '';
-  const ipLink = ip ? `<a href="http://${ip}">${ip}</a>` : 'N/A';
   const emoji = getRxLevelStatusEmoji(rx, thr);
-  return `• <b>${iface}</b> | RX <code>${rx}</code> | Thr <code>${thr}</code> | <i>${oper}</i> | ${ipLink} ${emoji}`;
+  return `▶️ ${ip} | ${neName} | ${iface} | ${ifSpeed} | ${desc} | ${rx} | ${thr} | ${oper} ${emoji}`;
 }
 
-function formatSideHTML(rows, labelA, labelB) {
-  if (!rows || !rows.length) return `<b>▶️ ${labelA} → ${labelB}</b>\n(i) tidak ada data relevan`;
-  return `<b>▶️ ${labelA} → ${labelB}</b>\n` + rows.map(formatLineHTML).join('\n');
+function formatSidePlain(rows, labelA, labelB) {
+  if (!rows || !rows.length) return `▶️ ${labelA} → ${labelB}\n(i) tidak ada data relevan`;
+  return `▶️ ${labelA} → ${labelB}\n` + rows.map(formatLinePlain).join('\n');
 }
 
 async function checkMetroStatus(neName1, neName2, options = {}) {
@@ -149,9 +152,9 @@ async function checkMetroStatus(neName1, neName2, options = {}) {
     }
 
     return [
-      formatSideHTML(sideA, baseA, baseB),
+      formatSidePlain(sideA, baseA, baseB),
       '────────────',
-      formatSideHTML(sideB, baseB, baseA)
+      formatSidePlain(sideB, baseB, baseA)
     ].join('\n');
 
   } catch (err) {
@@ -164,6 +167,6 @@ async function checkMetroStatus(neName1, neName2, options = {}) {
 
 module.exports = checkMetroStatus;
 module.exports.launchBrowser = launchBrowser;
-module.exports._formatSideHTML = formatSideHTML;
+module.exports._formatSidePlain = formatSidePlain;
 module.exports._baseLabel = baseLabel;
 module.exports._filterByOpponentDescription = filterByOpponentDescription;
