@@ -34,8 +34,7 @@ async function launchBrowser() {
 
 async function fetchRxTable(page, neName) {
   await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
-    waitUntil: 'domcontentloaded',
-    timeout: PAGE_TIMEOUT
+    waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT
   });
 
   await page.type('input[name="nename"]', neName);
@@ -94,16 +93,14 @@ async function fetchRxTable(page, neName) {
   }
 }
 
-/**
- * Filter satu sisi berdasarkan "base lawan" yang MUNCUL di kolom Description.
- * Contoh:
- *   - sisi A (SBY-GDK) -> target lawan "SBY-BDKL" → pilih rows yang Description mengandung "SBY-BDKL"
- */
-function filterByOpponentDescription(rows, opponentBase) {
-  const target = String(opponentBase).toLowerCase();
+/** Filter berdasarkan base label (SBY-XXX) */
+function filterByBase(rows, base) {
+  const b = String(base).toLowerCase();
   return (rows || []).filter((it) => {
-    const desc = String(it['Description'] || '').toLowerCase();
-    return desc.includes(target);
+    const ne   = String(it['NE Name']    || '').toLowerCase();
+    const desc = String(it['Description']|| '').toLowerCase();
+    const iface= String(it['Interface']  || '').toLowerCase();
+    return ne.includes(b) || desc.includes(b) || iface.includes(b);
   });
 }
 
@@ -132,17 +129,15 @@ async function checkMetroStatus(neName1, neName2, options = {}) {
     const ne1 = toUpperCaseNEName(neName1);
     const ne2 = toUpperCaseNEName(neName2);
 
-    const baseA = baseLabel(ne1); // contoh: SBY-GDK
-    const baseB = baseLabel(ne2); // contoh: SBY-BDKL
+    const baseA = baseLabel(ne1);
+    const baseB = baseLabel(ne2);
 
-    // Ambil hasil dari sudut pandang masing-masing NE
+    // Ambil dari perspektif masing-masing sisi untuk akurasi
     const rowsA = await fetchRxTable(page, ne1);
     const rowsB = await fetchRxTable(page, ne2);
 
-    // Sisi A: pilih baris yang Description-nya menyebut base B
-    const sideA = filterByOpponentDescription(rowsA, baseB);
-    // Sisi B: pilih baris yang Description-nya menyebut base A
-    const sideB = filterByOpponentDescription(rowsB, baseA);
+    const sideA = filterByBase(rowsA, baseA);  // hanya baris yang mengandung "SBY-GDK"
+    const sideB = filterByBase(rowsB, baseB);  // hanya baris yang mengandung "SBY-BDKL"
 
     if (options.returnStructured) {
       return { sideA, sideB, labelA: baseA, labelB: baseB };
@@ -166,4 +161,3 @@ module.exports = checkMetroStatus;
 module.exports.launchBrowser = launchBrowser;
 module.exports._formatSideHTML = formatSideHTML;
 module.exports._baseLabel = baseLabel;
-module.exports._filterByOpponentDescription = filterByOpponentDescription;

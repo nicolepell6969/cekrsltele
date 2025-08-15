@@ -1,3 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ====== KONFIGURASI ======
+REPO_DIR="${HOME}/cekrsltele"
+BRANCH="main"
+REMOTE_SSH="git@github.com:nicolepell6969/cekrsltele.git"
+GIT_NAME="nicolepell6969"
+GIT_EMAIL="ferenrezareynaldo5@gmail.com"
+SYSTEMD_SERVICE=""   # isi "cekrsltele" jika pakai systemd; kosongkan jika tidak
+PM2_NAME=""          # isi "cekrsltele" jika pakai PM2; kosongkan jika tidak
+# =========================
+
+echo "==> Masuk repo: $REPO_DIR"
+cd "$REPO_DIR"
+
+# Pastikan remote SSH benar
+if git remote -v | grep -q '^origin'; then
+  git remote set-url origin "$REMOTE_SSH"
+else
+  git remote add origin "$REMOTE_SSH"
+fi
+
+# Checkout branch
+git fetch origin || true
+if git show-ref --verify --quiet "refs/heads/${BRANCH}"; then
+  git checkout "$BRANCH"
+else
+  git checkout -b "$BRANCH"
+fi
+git pull --rebase origin "$BRANCH" || true
+
+# Backup file lama
+TS="$(date +%Y%m%d-%H%M%S)"
+BKDIR=".backup-$TS"
+mkdir -p "$BKDIR"
+[ -f checkMetroStatus.js ] && cp -f checkMetroStatus.js "$BKDIR/checkMetroStatus.js" || true
+echo "==> Backup di $BKDIR"
+
+# .gitignore aman
+grep -qxF "node_modules" .gitignore || echo "node_modules" >> .gitignore
+grep -qxF ".env" .gitignore || echo ".env" >> .gitignore
+grep -qxF "history.json" .gitignore || echo "history.json" >> .gitignore
+grep -qxF "npm-debug.log*" .gitignore || echo "npm-debug.log*" >> .gitignore
+
+# ============ TULIS checkMetroStatus.js (VERSI TERBARU) ============
+cat > checkMetroStatus.js <<'EOF'
 const puppeteer = require('puppeteer');
 
 const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || null;
@@ -167,3 +214,36 @@ module.exports.launchBrowser = launchBrowser;
 module.exports._formatSideHTML = formatSideHTML;
 module.exports._baseLabel = baseLabel;
 module.exports._filterByOpponentDescription = filterByOpponentDescription;
+EOF
+# ================================================================
+
+echo "==> npm install (sync lockfile)…"
+npm install
+
+# Set identitas git lokal bila belum
+git config user.name >/dev/null 2>&1 || git config user.name "$GIT_NAME"
+git config user.email >/dev/null 2>&1 || git config user.email "$GIT_EMAIL"
+
+# Pastikan node_modules tidak ikut
+git rm -r --cached node_modules >/dev/null 2>&1 || true
+
+echo "==> Commit & push…"
+git add -A
+git commit -m "feat: checkMetroStatus filter by opponent in Description (dua sisi)" || true
+git branch -M "$BRANCH"
+git push -u origin "$BRANCH"
+
+# Restart service jika diisi
+if [[ -n "${SYSTEMD_SERVICE}" ]]; then
+  echo "==> Restart systemd service: ${SYSTEMD_SERVICE}"
+  sudo systemctl daemon-reload || true
+  sudo systemctl restart "${SYSTEMD_SERVICE}" || true
+fi
+if [[ -n "${PM2_NAME}" ]]; then
+  echo "==> Restart PM2 app: ${PM2_NAME}"
+  if command -v pm2 >/dev/null 2>&1; then
+    pm2 restart "${PM2_NAME}" || true
+  fi
+fi
+
+echo "✅ Selesai. File checkMetroStatus.js diperbarui & dipush ke GitHub."
