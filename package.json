@@ -1,7 +1,23 @@
 {
+  "name": "cekrsltele",
+  "version": "1.1.0",
+  "description": "Telegram bot cek RX Level Metro",
+  "main": "bot.js",
+  "private": true,
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon --watch . --ext js,json --exec node bot.js",
+    "postinstall": "node -e \"console.log('> Postinstall complete')\""
+  },
   "dependencies": {
-    "fs": "^0.0.1-security",
+    "dotenv": "^16.4.5",
     "node-telegram-bot-api": "^0.66.0",
-    "puppeteer": "^24.7.2"
+    "puppeteer": "^22.13.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
