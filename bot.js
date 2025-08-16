@@ -19,7 +19,7 @@ require('dotenv').config({ path: __dirname + '/.env' });
 
 const fs = require('fs');
 const TelegramBot = require('node-telegram-bot-api');
-const QR = require('qrcode');');
+const QR = require('qrcode');;
 
 // optional modules
 let checkMetroStatus=null;
@@ -67,10 +67,26 @@ async function waStart(notifyChatId){
   sock.ev.on('connection.update',(u)=>{
     const { connection, lastDisconnect, qr } = u;
     
+
 if (qr && notifyChatId) {
   (async () => {
     try {
       const buf = await QR.toBuffer(qr, { type: 'png', scale: 8, margin: 1 });
+      await bot.sendPhoto(notifyChatId, buf, {
+        caption: '📲 Scan QR WhatsApp berikut (berlaku ~60 detik). Jika kadaluarsa, kirim /wa_pair lagi.'
+      });
+    } catch (e) {
+      try {
+        const qrt = require('qrcode-terminal');
+        let ascii=''; qrt.generate(qr,{small:true}, c=>ascii=c);
+        await bot.sendMessage(notifyChatId, 'QR WhatsApp (fallback ASCII):\n\n'+ascii);
+      } catch (e2) {
+        await bot.sendMessage(notifyChatId, 'Gagal membuat QR image: ' + (e && e.message ? e.message : e));
+      }
+    }
+  })();
+}
+);
       await bot.sendPhoto(notifyChatId, buf, { caption: '📲 Scan QR WhatsApp berikut (berlaku ~60 detik). Jika kadaluarsa, kirim /wa_pair lagi.' });
     } catch (e) {
       // Fallback ke ASCII jika pembuatan PNG gagal
