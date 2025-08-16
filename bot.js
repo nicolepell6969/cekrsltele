@@ -282,3 +282,46 @@ process.on('SIGINT', quit);
 
 // Autostart WA jika WA_ENABLED=true
 if (WA_ENABLED) { waStart(null).catch(()=>{}); }
+
+// ===== DEBUG: kirim error ke admin via Telegram =====
+function _getAdminIds(){
+  try {
+    const list = (adminStore && typeof adminStore.listAdmins==='function')
+      ? adminStore.listAdmins()
+      : [];
+    return (list||[]).map(x=>String(x)).filter(Boolean);
+  } catch { return []; }
+}
+function notifyAdmins(text){
+  try {
+    const ids = _getAdminIds();
+    if (!ids.length) return;
+    const msg = `⚠️ [DEBUG ERROR]\n${text}`;
+    for (const id of ids) { bot.sendMessage(id, msg).catch(()=>{}); }
+  } catch {}
+}
+
+// polling error → kirim ke admin juga
+try {
+  bot.on('polling_error', (err)=>{
+    const body = (err && err.response && err.response.body) ? err.response.body : (err && err.message ? err.message : String(err));
+    notifyAdmins(`[polling_error] ${body}`);
+  });
+} catch {}
+
+// global handlers
+process.on('uncaughtException', (err)=>{
+  const msg = (err && err.stack) ? err.stack : String(err);
+  try { console.error('uncaughtException', err); } catch {}
+  notifyAdmins(`Uncaught Exception:\n${msg}`);
+});
+process.on('unhandledRejection', (reason, p)=>{
+  const msg = (reason && reason.stack) ? reason.stack : String(reason);
+  try { console.error('unhandledRejection', reason); } catch {}
+  notifyAdmins(`Unhandled Rejection:\n${msg}`);
+});
+
+// util opsional untuk kirim debug manual dari tempat lain:
+// bot.sendAdminDebug?.('teks debug');
+// atau panggil notifyAdmins('pesan');
+bot.sendAdminDebug = (text)=> { try { notifyAdmins(text); } catch {} };
