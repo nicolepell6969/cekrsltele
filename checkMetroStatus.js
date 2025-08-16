@@ -1,4 +1,4 @@
-// checkMetroStatus.js — alias NE fallback + robust RAW parse + regex match + smart service + clear input + RX->PortStatus
+// checkMetroStatus.js — FULL: alias NE fallback + user logs + robust RAW parse + regex + smart service + clear input + RX->PortStatus
 const puppeteer = require('puppeteer');
 
 const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || null;
@@ -28,31 +28,28 @@ async function launchBrowser(){
 /**
  * Dari satu NE, buat berbagai kandidat:
  * - original
- * - tukar EN1 <-> OPT (jika ada)
+ * - tukar EN1 <-> OPT
  * - H910D <-> 910D
- * - potong ke 3 segmen pertama
- * - potong ke 2 segmen (SBY-PRMJ)
- * - pola umum: CITY-SITE, CITY-SITE-EN1, CITY-SITE-OPT, CITY-SITE-EN1-H910D, CITY-SITE-OPT-H910D, dan variannya tanpa 'H'
- * - tambahan alias manual dari contoh user (bila cocok)
+ * - potong ke 3 segmen, 2 segmen (SBY-PRMJ)
+ * - kombinasi umum city-site + EN1/OPT + H910D/910D
  */
 function generateCandidates(ne){
   const NE = toUpperCaseNEName(ne);
   const parts = NE.split('-');
-  const citySite = baseCitySite(NE);           // SBY-PRMJ
-  const third = parts[2] || '';                // EN1/OPT/...
-  const tail = parts.slice(2).join('-');
+  const citySite = baseCitySite(NE);          // SBY-PRMJ
+  const third = parts[2] || '';               // EN1/OPT/...
 
   const swapMode = (s)=> s.replace(/-EN1-/g,'-OPT-').replace(/-OPT-/g,'-EN1-');
-  const swapH = (s)=> s.replace(/H910D/g,'910D').replace(/-910D\b/g,'-H910D');
+  const swapH = (s)=> s.replace(/H910D/g,'910D').replace(/-910D\\b/g,'-H910D');
 
   const common = [
     NE,
     swapMode(NE),
     swapH(NE),
     swapH(swapMode(NE)),
-    parts.slice(0,3).join('-'),             // SBY-PRMJ-EN1
+    parts.slice(0,3).join('-'),               // SBY-PRMJ-EN1 / -OPT
     parts.slice(0,3).join('-').replace(/EN1|OPT/g,m=>m==='EN1'?'OPT':'EN1'),
-    citySite,                               // SBY-PRMJ
+    citySite,                                 // SBY-PRMJ
     `${citySite}-${third||'EN1'}`,
     `${citySite}-${third||'OPT'}`.replace(/EN1|OPT/g,'OPT'),
     `${citySite}-EN1-H910D`,
@@ -61,7 +58,7 @@ function generateCandidates(ne){
     `${citySite}-OPT-910D`,
   ];
 
-  // alias manual (berdasarkan contoh user)
+  // alias manual “pasti coba”
   const manual = [
     `${citySite}-OPT-H910D`,
     `${citySite}-EN1-H910D`,
@@ -137,6 +134,7 @@ async function fetchTable(page, neName, serviceLabel){
         Object.entries(colIndex).forEach(([name,idx])=>{
           if (idx < tds.length) row[name] = tds[idx].textContent.trim();
         });
+        // heuristik
         if (!row['Description']) {
           const cand = tds.find(td => /to[_\-]|10g/i.test(td.textContent||''));
           if (cand) row['Description'] = cand.textContent.trim();
@@ -197,7 +195,10 @@ function matchesOpponent(text, opponentBase, opponentFull){
   const baseN = norm(opponentBase);
   const fullN = norm(opponentFull);
   if (!baseN) return false;
+
   if (contains(H, baseN) || (fullN && contains(H, fullN))) return true;
+
+  // regex: "to[_- ]*<SBY GGKJ>" (toleran separator)
   const b = baseN.replace(/\s+/g, '[_\\-\\s]*');
   const re = new RegExp(`TO[_\\-\\s]*${b}`, 'i');
   return re.test(H);
@@ -222,21 +223,26 @@ function formatSidePlain(rows, labelA, labelB){
   return `▶️ ${labelA} → ${labelB}\n` + rows.map(formatLinePlain).join('\n');
 }
 
-/* ---------- pencarian bertingkat: coba semua kandidat ---------- */
-async function tryFetchForOneSide(page, neOriginal, opponentBase, opponentFull){
+/* ---------- pencarian bertingkat: coba semua kandidat + log ke user ---------- */
+async function tryFetchForOneSide(page, neOriginal, opponentBase, opponentFull, logs){
   const candidates = generateCandidates(neOriginal);
-  // 1) RX level untuk tiap kandidat
+
+  // 1) RX Level untuk tiap kandidat
   for (const cand of candidates){
     const rows = await fetchTable(page, cand, 'rx-level');
     const filtered = filterByOpponent(rows, opponentBase, opponentFull);
     if (filtered.length) return { rows: filtered, used: cand, service: 'rx-level' };
+    logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" di RX Level, mencoba kandidat lain…`);
   }
-  // 2) Port status untuk tiap kandidat
+
+  // 2) Port Status untuk tiap kandidat
   for (const cand of candidates){
     const rows = await fetchTable(page, cand, 'port status');
     const filtered = filterByOpponent(rows, opponentBase, opponentFull);
     if (filtered.length) return { rows: filtered, used: cand, service: 'port-status' };
+    logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" di Port Status, mencoba kandidat lain…`);
   }
+
   return { rows: [], used: candidates[0]||neOriginal, service: 'none' };
 }
 
@@ -249,23 +255,26 @@ async function checkMetroStatus(neName1, neName2, options = {}){
   try{
     const ne1 = toUpperCaseNEName(neName1);
     const ne2 = toUpperCaseNEName(neName2);
-    const baseA = baseCitySite(ne1); // SBY-PRMJ
-    const baseB = baseCitySite(ne2);
+    const baseA = baseCitySite(ne1); // contoh: SBY-PRMJ
+    const baseB = baseCitySite(ne2); // contoh: SBY-GGKJ
 
-    const sideARes = await tryFetchForOneSide(page, ne1, baseB, ne2);
-    const sideBRes = await tryFetchForOneSide(page, ne2, baseA, ne1);
+    const logs = [];
+    const sideA = await tryFetchForOneSide(page, ne1, baseB, ne2, logs);
+    const sideB = await tryFetchForOneSide(page, ne2, baseA, ne1, logs);
 
     const text = [
-      formatSidePlain(sideARes.rows, baseCitySite(sideARes.used), baseB),
+      ...logs,
+      formatSidePlain(sideA.rows, baseCitySite(sideA.used), baseB),
       '────────────',
-      formatSidePlain(sideBRes.rows, baseCitySite(sideBRes.used), baseA)
+      formatSidePlain(sideB.rows, baseCitySite(sideB.used), baseA)
     ].join('\n');
 
     if (options.returnStructured) {
       return {
-        sideA: sideARes.rows, usedA: sideARes.used, svcA: sideARes.service,
-        sideB: sideBRes.rows, usedB: sideBRes.used, svcB: sideBRes.service,
-        labelA: baseCitySite(sideARes.used), labelB: baseCitySite(sideBRes.used)
+        logs,
+        sideA: sideA.rows, usedA: sideA.used, svcA: sideA.service,
+        sideB: sideB.rows, usedB: sideB.used, svcB: sideB.service,
+        labelA: baseCitySite(sideA.used), labelB: baseCitySite(sideB.used)
       };
     }
     return text;
