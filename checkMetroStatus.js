@@ -1,341 +1,328 @@
-/**
- * checkMetroStatus.js — versi cepat & stabil
- * - Reuse 1 browser (singleton) + 2 fetcher tab
- * - Block resource tidak perlu (image/css/font/media)
- * - Cek 2 sisi paralel
- * - Batasi kandidat via ENV MAX_CANDIDATES (default 4)
- * - Timeout tiap langkah via ENV PAGE_TIMEOUT_MS (default 15000)
- * - Limit baris output via ENV MAX_LINES_PER_SIDE (default 40)
- */
+// checkMetroStatus.js — FULL: 2 sisi + Fallback alias + user logs + RAW parse + RX->PortStatus + MODE 1 NE
 const puppeteer = require('puppeteer');
 
 const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || null;
-const PAGE_TIMEOUT = Number(process.env.PAGE_TIMEOUT_MS || 15000);
+const PAGE_TIMEOUT = Number(process.env.PAGE_TIMEOUT_MS || 60000);
 const HEADLESS = process.env.HEADLESS !== 'false';
-const MAX_CANDIDATES = Number(process.env.MAX_CANDIDATES || 4);
 const HIGHER_IS_BETTER = process.env.RX_HIGHER_IS_BETTER !== 'false';
 
-/* ---------- util ---------- */
-const U = {
-  up: s => String(s||'').toUpperCase().trim(),
-  uniq: a => Array.from(new Set((a||[]).filter(Boolean))),
-  citySite: ne => {
-    const p = U.up(ne).split('-');
-    return p.length>=2 ? `${p[0]}-${p[1]}` : U.up(ne);
-  },
-  emoji(rx, thr){
-    if (String(rx).trim() === '-40.00') return '❌';
-    const r = Number(rx), t = Number(thr);
-    if (Number.isNaN(r) || Number.isNaN(t)) return '❓';
-    return (HIGHER_IS_BETTER ? r>t : r<t) ? '✅' : '⚠️';
-  },
-  norm: s => String(s||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim(),
-  contains(hay, needle){ const H=U.norm(hay), N=U.norm(needle); return N && H.includes(N); },
-};
-
-/* ---------- kandidat NE (diurutkan paling prospektif) ---------- */
-function genCandidates(ne){
-  const NE = U.up(ne);
-  const parts = NE.split('-');
-  const citySite = U.citySite(NE);
-  const third = parts[2] || '';
-  const swapMode = s => s.replace(/-EN1-/g,'-OPT-').replace(/-OPT-/g,'-EN1-');
-  const swapH = s => s.replace(/H910D/g,'910D').replace(/-910D\b/g,'-H910D');
-
-  const arr = [
-    NE,
-    `${citySite}-EN1-H910D`,
-    `${citySite}-OPT-H910D`,
-    `${citySite}`,
-    swapMode(NE), swapH(NE), swapH(swapMode(NE)),
-    `${citySite}-${third||'EN1'}`,
-    `${citySite}-${third||'OPT'}`,
-    `${citySite}-EN1-910D`,
-    `${citySite}-OPT-910D`,
-  ];
-  return U.uniq(arr).slice(0, MAX_CANDIDATES);
+/* ---------- helpers ---------- */
+function toUpperCaseNEName(neName){ return String(neName||'').toUpperCase().trim(); }
+function uniq(arr){ return Array.from(new Set(arr.filter(Boolean))); }
+function baseCitySite(ne){ const p = String(ne).toUpperCase().split('-'); return p.length>=2 ? `${p[0]}-${p[1]}` : String(ne).toUpperCase(); }
+function getRxLevelStatusEmoji(rx, thr){
+  if (String(rx).trim() === '-40.00') return '❌';
+  const r = Number(rx), t = Number(thr);
+  if (Number.isNaN(r) || Number.isNaN(t)) return '❓';
+  return (HIGHER_IS_BETTER ? r>t : r<t) ? '✅' : '⚠️';
 }
-
-/* ---------- launch & singleton ---------- */
 async function launchBrowser(){
   return puppeteer.launch({
     headless: HEADLESS,
-    args: [
-      '--single-process',
-      '--no-zygote',
-      '--disable-dev-shm-usage',
-      '--no-sandbox',
-      '--disable-setuid-sandbox'
-    ],
+    args: ['--no-sandbox','--disable-setuid-sandbox'],
     executablePath: PUPPETEER_EXECUTABLE_PATH || undefined
   });
 }
-let _sharedBrowser = null;
-async function getBrowser(){
-  try {
-    if (_sharedBrowser && _sharedBrowser.process() && !_sharedBrowser.process().killed) {
-      return _sharedBrowser;
-    }
-  } catch {}
-  _sharedBrowser = await launchBrowser();
-  return _sharedBrowser;
-}
-function notifyProgress(options, text){
-  try { if (options && typeof options.progress === 'function') options.progress(text); } catch {}
+
+/* ---------- generator alias NE ---------- */
+function generateCandidates(ne){
+  const NE = toUpperCaseNEName(ne);
+  const parts = NE.split('-');
+  const citySite = baseCitySite(NE);
+  const third = parts[2] || '';
+
+  const swapMode = (s)=> s.replace(/-EN1-/g,'-OPT-').replace(/-OPT-/g,'-EN1-');
+  const swapH = (s)=> s.replace(/H910D/g,'910D').replace(/-910D\\b/g,'-H910D');
+
+  const common = [
+    NE,
+    swapMode(NE),
+    swapH(NE),
+    swapH(swapMode(NE)),
+    parts.slice(0,3).join('-'),
+    parts.slice(0,3).join('-').replace(/EN1|OPT/g,m=>m==='EN1'?'OPT':'EN1'),
+    citySite,
+    `${citySite}-${third||'EN1'}`,
+    `${citySite}-${third||'OPT'}`.replace(/EN1|OPT/g,'OPT'),
+    `${citySite}-EN1-H910D`,
+    `${citySite}-OPT-H910D`,
+    `${citySite}-EN1-910D`,
+    `${citySite}-OPT-910D`,
+  ];
+
+  const manual = [
+    `${citySite}-OPT-H910D`,
+    `${citySite}-EN1-H910D`,
+    citySite,
+    `${citySite}-OPT-910D`,
+    `${citySite}-EN1-910D`,
+  ];
+
+  return uniq([...common, ...manual]);
 }
 
-/* ---------- fetcher cepat (reuse tab) ---------- */
-async function createFetcher(browser){
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1024, height: 800, deviceScaleFactor: 1 });
-  await page.setRequestInterception(true);
-  page.on('request', req => {
-    const type = req.resourceType();
-    if (['image','stylesheet','font','media'].includes(type)) return req.abort();
-    const url = req.url();
-    if (/google-analytics|doubleclick|facebook|hotjar/i.test(url)) return req.abort();
-    return req.continue();
+/* ---------- pilih service ---------- */
+async function selectService(page, targets){
+  const value = await page.evaluate((ts)=>{
+    const sel = document.querySelector('select[name="service"]');
+    if(!sel) return null;
+    const opts = Array.from(sel.options).map(o=>({
+      value:(o.value||'').toLowerCase(),
+      text:(o.textContent||'').toLowerCase()
+    }));
+    for(const raw of ts){
+      const q = String(raw).toLowerCase();
+      const idx = opts.findIndex(o => o.value.includes(q) || o.text.includes(q));
+      if (idx>=0){ sel.selectedIndex = idx; return sel.options[idx].value; }
+    }
+    return null;
+  }, targets);
+  if (value) { await page.select('select[name="service"]', value); return true; }
+  return false;
+}
+
+/* ---------- scraping satu query ---------- */
+async function fetchTable(page, neName, serviceLabel){
+  await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
+    waitUntil:'domcontentloaded', timeout: PAGE_TIMEOUT
   });
 
-  const resPage = await browser.newPage();
-  await resPage.setRequestInterception(true);
-  resPage.on('request', req => {
-    const type = req.resourceType();
-    if (['image','stylesheet','font','media'].includes(type)) return req.abort();
-    return req.continue();
+  // Clear input
+  await page.waitForSelector('input[name="nename"]', { timeout: 10000 });
+  await page.focus('input[name="nename"]');
+  await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control');
+  await page.keyboard.press('Backspace');
+  await page.$eval('input[name="nename"]', el => el.value = '');
+  await page.type('input[name="nename"]', neName);
+
+  // Pilih service
+  const ok = serviceLabel.toLowerCase().includes('rx')
+    ? await selectService(page, ['rx-level','rx level','rx'])
+    : await selectService(page, ['port-status','port status','port']);
+  if (!ok) { await page.select('select[name="service"]', serviceLabel); }
+
+  await page.click('input[name="submit"]');
+  await page.waitForSelector('iframe#myIframe', { timeout: 10000 });
+
+  const frameUrl = await page.evaluate(()=>{
+    const i = document.querySelector('iframe#myIframe');
+    return i && i.src ? i.src : null;
   });
+  if(!frameUrl) throw new Error('Frame URL tidak ditemukan');
 
-  async function gotoForm(){
-    await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
-      waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT
-    });
-  }
+  const resPage = await page.browser().newPage();
+  try{
+    await resPage.goto(frameUrl, { waitUntil:'networkidle2', timeout: PAGE_TIMEOUT });
 
-  async function submit(neName, serviceLabel){
-    await page.waitForSelector('input[name="nename"]', { timeout: PAGE_TIMEOUT });
-    await page.$eval('input[name="nename"]', el => el.value = '');
-    await page.type('input[name="nename"]', neName);
+    const rows = await resPage.evaluate(()=>{
+      const wanted = ['NE Name','Description','RX Level','RX Threshold','Oper Status','Interface','IF Speed','NE IP'];
+      const tables = Array.from(document.querySelectorAll('table'));
+      const data = [];
 
-    // pilih service by label/text
-    const ok = await page.evaluate((label)=>{
-      const sel = document.querySelector('select[name="service"]');
-      if(!sel) return false;
-      const t = String(label).toLowerCase();
-      const i = Array.from(sel.options).findIndex(o =>
-        (o.value||'').toLowerCase().includes(t) || (o.textContent||'').toLowerCase().includes(t)
-      );
-      if (i>=0){ sel.selectedIndex=i; return true; }
-      return false;
-    }, serviceLabel);
-    if (!ok) await page.select('select[name="service"]', serviceLabel);
+      const pushRow = (tds, colIndex)=>{
+        const raw = tds.map(td => (td.textContent||'').trim()).join(' | ');
+        const row = { __RAW: raw };
+        Object.entries(colIndex).forEach(([name,idx])=>{
+          if (idx < tds.length) row[name] = tds[idx].textContent.trim();
+        });
+        if (!row['Description']) {
+          const cand = tds.find(td => /to[_\-]|10g/i.test(td.textContent||''));
+          if (cand) row['Description'] = cand.textContent.trim();
+        }
+        if (!row['NE Name'] && tds[1]) row['NE Name'] = tds[1].textContent.trim();
+        data.push(row);
+      };
 
-    await page.click('input[name="submit"]');
-    await page.waitForSelector('iframe#myIframe', { timeout: PAGE_TIMEOUT });
-
-    const frameUrl = await page.evaluate(()=>{
-      const i = document.querySelector('iframe#myIframe');
-      return i && i.src ? i.src : null;
-    });
-    if (!frameUrl) throw new Error('Frame URL tidak ditemukan');
-
-    await resPage.goto(frameUrl, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT });
-    return parseTable(resPage);
-  }
-
-  return {
-    async run(neName, service){ await gotoForm(); return submit(neName, service); },
-    close: async ()=> { try{ await page.close(); }catch{} try{ await resPage.close(); }catch{} }
-  };
-}
-
-/* ---------- parser tabel ---------- */
-async function parseTable(resPage){
-  return resPage.evaluate(()=>{
-    const wanted = ['NE Name','Description','RX Level','RX Threshold','Oper Status','Interface','IF Speed','NE IP'];
-    const tables = Array.from(document.querySelectorAll('table'));
-
-    function buildRow(tds, colIndex){
-      const raw = tds.map(td => (td.textContent||'').trim()).join(' | ');
-      const row = { __RAW: raw };
-      for (const [k,i] of Object.entries(colIndex)) if (i < tds.length) row[k] = tds[i].textContent.trim();
-      if (!row['Description']) {
-        const cand = tds.find(td => /to[_\-]|10g|ge\d/i.test((td.textContent||'')));
-        if (cand) row['Description'] = cand.textContent.trim();
-      }
-      if (!row['NE Name'] && tds[1]) row['NE Name'] = tds[1].textContent.trim();
-      return row;
-    }
-
-    if (tables.length){
-      // pilih tabel paling kaya kolom
-      let best = { score:-1, t:null };
-      for(const t of tables){
-        const headers = Array.from(t.querySelectorAll('th,td')).map(c=>(c.textContent||'').trim().toLowerCase());
-        const score = wanted.reduce((s,w)=> s + (headers.some(h=>h.includes(w.toLowerCase()))?1:0), 0);
-        if (score>best.score) best = { score, t };
-      }
-      const table = best.t;
-      if (table){
-        const rows = Array.from(table.querySelectorAll('tr'));
-        const head = rows.shift();
-        const idx = {};
-        if (head){
-          Array.from(head.children).forEach((c,i)=>{
-            const txt=(c.textContent||'').trim().toLowerCase();
-            wanted.forEach(w=>{ if (txt.includes(w.toLowerCase())) idx[w]=i; });
+      if (tables.length){
+        // pilih tabel paling relevan
+        let best = { score:-1, table:null };
+        for(const t of tables){
+          const headers = Array.from(t.querySelectorAll('th,td')).map(c=>c.textContent.trim().toLowerCase());
+          const score = wanted.reduce((s,w)=> s + (headers.some(h=>h.includes(w.toLowerCase()))?1:0), 0);
+          if (score > best.score) best = { score, table:t };
+        }
+        const table = best.table;
+        if (table){
+          const headerRow = table.querySelector('tr');
+          const headerCells = headerRow ? Array.from(headerRow.children) : [];
+          const colIndex = {};
+          headerCells.forEach((cell,i)=>{
+            const txt = cell.textContent.trim().toLowerCase();
+            wanted.forEach(w=>{ if(txt.includes(w.toLowerCase())) colIndex[w]=i; });
           });
-        }
-        const out=[];
-        for(const tr of rows){
-          const tds = Array.from(tr.querySelectorAll('td'));
-          if (!tds.length) continue;
-          out.push(buildRow(tds, idx));
-        }
-        if (out.length) return out;
-      }
-    }
 
-    // fallback: scan semua tr
-    const out=[];
-    const trs = Array.from(document.querySelectorAll('tr'));
-    for(const tr of trs){
-      const tds = Array.from(tr.querySelectorAll('td'));
-      if (!tds.length) continue;
-      const raw = tds.map(td => (td.textContent||'').trim()).join(' | ');
-      out.push({ __RAW: raw, 'Description': raw });
-    }
-    return out;
-  });
+          const trs = Array.from(table.querySelectorAll('tr')).slice(1);
+          for(const tr of trs){
+            const tds = Array.from(tr.querySelectorAll('td'));
+            if(!tds.length) continue;
+            pushRow(tds, colIndex);
+          }
+          if (data.length) return data;
+        }
+      }
+
+      // Fallback super: scan semua <tr> mentah
+      const rawRows = [];
+      const trs = Array.from(document.querySelectorAll('tr'));
+      for (const tr of trs) {
+        const tds = Array.from(tr.querySelectorAll('td'));
+        if (!tds.length) continue;
+        const raw = tds.map(td => (td.textContent||'').trim()).join(' | ');
+        rawRows.push({ __RAW: raw });
+      }
+      return rawRows;
+    });
+
+    return rows;
+  } finally { await resPage.close().catch(()=>{}); }
 }
 
-/* ---------- filter lawan ---------- */
-function matchOpponent(text, oppBase, oppFull){
-  const H = String(text||'');
-  const baseN = U.norm(oppBase);
-  const fullN = U.norm(oppFull);
+/* ---------- matcher dua sisi ---------- */
+function norm(s){ return String(s||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim(); }
+function contains(hay, needle){ const H = norm(hay), N = norm(needle); return N ? H.includes(N) : false; }
+function matchesOpponent(text, opponentBase, opponentFull){
+  const H = String(text || '');
+  const baseN = norm(opponentBase);
+  const fullN = norm(opponentFull);
   if (!baseN) return false;
-  if (U.contains(H, baseN) || (fullN && U.contains(H, fullN))) return true;
-  const re = new RegExp(`TO[_\\-\\s]*${baseN.replace(/\s+/g,'[_\\-\\s]*')}`, 'i');
+
+  if (contains(H, baseN) || (fullN && contains(H, fullN))) return true;
+
+  const b = baseN.replace(/\s+/g, '[_\\-\\s]*');
+  const re = new RegExp(`TO[_\\-\\s]*${b}`, 'i');
   return re.test(H);
 }
-function filterRows(rows, oppBase, oppFull){
-  return (rows||[]).filter(r =>
-    matchOpponent(r['Description'], oppBase, oppFull) ||
-    matchOpponent(r['NE Name'],    oppBase, oppFull) ||
-    matchOpponent(r['__RAW'],      oppBase, oppFull)
-  );
+function filterByOpponent(rows, opponentBase, opponentFull){
+  return (rows||[]).filter((it)=>{
+    return matchesOpponent(it['Description'], opponentBase, opponentFull) ||
+           matchesOpponent(it['NE Name'],    opponentBase, opponentFull) ||
+           matchesOpponent(it['__RAW'],      opponentBase, opponentFull);
+  });
 }
 
-/* ---------- format ---------- */
-function fmtLine(r){
-  const ip=r['NE IP']||'N/A', name=r['NE Name']||'N/A', ifc=r['Interface']||'N/A', sp=r['IF Speed']||'N/A';
-  const desc=r['Description']||r['__RAW']||'N/A';
-  const rx=r['RX Level']||'N/A', th=r['RX Threshold']||'N/A', op=r['Oper Status']||'N/A';
-  return `▶️ ${ip} | ${name} | ${ifc} | ${sp} | ${desc} | ${rx} | ${th} | ${op} ${U.emoji(rx,th)}`;
+/* ---------- formatter ---------- */
+function formatLinePlain(it){
+  const ip=it['NE IP']||'N/A', name=it['NE Name']||'N/A', iface=it['Interface']||'N/A', spd=it['IF Speed']||'N/A';
+  const desc=it['Description']||it['__RAW']||'N/A';
+  const rx=it['RX Level']||'N/A', thr=it['RX Threshold']||'N/A', oper=it['Oper Status']||'N/A';
+  return `▶️ ${ip} | ${name} | ${iface} | ${spd} | ${desc} | ${rx} | ${thr} | ${oper} ${getRxLevelStatusEmoji(rx,thr)}`;
 }
-function fmtSide(rows, a, b){
-  const limit = Number(process.env.MAX_LINES_PER_SIDE || 40);
-  if (!rows || !rows.length) return `▶️ ${a} → ${b}\n(i) tidak ada data relevan`;
-  const lines = rows.map(fmtLine);
-  const out = lines.slice(0, limit).join('\n');
-  const more = lines.length>limit ? `\n… (${lines.length-limit} baris disembunyikan)` : '';
-  return `▶️ ${a} → ${b}\n${out}${more}`;
+function formatSidePlain(rows, labelA, labelB){
+  if(!rows || !rows.length) return `▶️ ${labelA} → ${labelB}\n(i) tidak ada data relevan`;
+  return `▶️ ${labelA} → ${labelB}\n` + rows.map(formatLinePlain).join('\n');
 }
-function fmtAll(rows, a){
-  if (!rows || !rows.length) return `📋 Semua data: ${a}\n(i) tidak ada data`;
-  return `📋 Semua data: ${a}\n` + rows.map(fmtLine).join('\n');
+function formatAllPlain(rows, label){
+  if(!rows || !rows.length) return `📋 Semua data: ${label}\n(i) tidak ada data`;
+  return `📋 Semua data: ${label}\n` + rows.map(formatLinePlain).join('\n');
 }
 
-/* ---------- mesin cek sisi ---------- */
-async function trySide(fetcher, neOriginal, oppBase, oppFull, logs){
-  const cands = genCandidates(neOriginal);
-  for (const cand of cands){
-    const rows = await fetcher.run(cand, 'rx-level');
-    const ok = filterRows(rows, oppBase, oppFull);
-    if (ok.length) return { rows: ok, used: cand, svc: 'rx' };
-    logs.push(`ℹ️ RX: tidak ketemu dengan "${cand}", lanjut…`);
+/* ---------- pencarian 2 sisi ---------- */
+async function tryFetchForOneSide(page, neOriginal, opponentBase, opponentFull, logs){
+  const candidates = generateCandidates(neOriginal);
+
+  for (const cand of candidates){
+    const rows = await fetchTable(page, cand, 'rx-level');
+    const filtered = filterByOpponent(rows, opponentBase, opponentFull);
+    if (filtered.length) return { rows: filtered, used: cand, service: 'rx-level' };
+    logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" di RX Level, mencoba kandidat lain…`);
   }
-  for (const cand of cands){
-    const rows = await fetcher.run(cand, 'port status');
-    const ok = filterRows(rows, oppBase, oppFull);
-    if (ok.length) return { rows: ok, used: cand, svc: 'port' };
-    logs.push(`ℹ️ Port: tidak ketemu dengan "${cand}", lanjut…`);
+
+  for (const cand of candidates){
+    const rows = await fetchTable(page, cand, 'port status');
+    const filtered = filterByOpponent(rows, opponentBase, opponentFull);
+    if (filtered.length) return { rows: filtered, used: cand, service: 'port-status' };
+    logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" di Port Status, mencoba kandidat lain…`);
   }
-  return { rows: [], used: cands[0]||neOriginal, svc: 'none' };
+
+  return { rows: [], used: generateCandidates(neOriginal)[0]||neOriginal, service: 'none' };
 }
 
-/* ---------- 1 NE: gabung RX + Port tanpa filter lawan ---------- */
-function dedupe(rows){
-  const seen = new Set(); const out=[];
-  for(const r of rows||[]){ const k=r.__RAW || JSON.stringify(r); if(!seen.has(k)){ seen.add(k); out.push(r); } }
+/* ---------- MODE 1 NE: ambil semua data tanpa filter lawan ---------- */
+function dedupeByRaw(rows){
+  const seen = new Set(); const out = [];
+  for (const r of rows||[]) {
+    const key = r.__RAW || JSON.stringify(r);
+    if (!seen.has(key)) { seen.add(key); out.push(r); }
+  }
   return out;
 }
-async function trySingle(fetcher, neOriginal, logs){
-  const cands = genCandidates(neOriginal);
-  for (const cand of cands){
-    const rx = await fetcher.run(cand, 'rx-level');
-    const ps = await fetcher.run(cand, 'port status');
-    const merged = dedupe([...(rx||[]), ...(ps||[])]);
+async function tryFetchAllForSingle(page, neOriginal, logs){
+  const candidates = generateCandidates(neOriginal);
+  // kumpulkan kombinasi RX + Port untuk kandidat pertama yang menghasilkan data apa pun
+  for (const cand of candidates){
+    const rx = await fetchTable(page, cand, 'rx-level');
+    const ps = await fetchTable(page, cand, 'port status');
+    const merged = dedupeByRaw([...(rx||[]), ...(ps||[])]);
     if (merged.length) return { rows: merged, used: cand };
-    logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" (RX+Port), lanjut…`);
+    logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" (RX & Port), mencoba kandidat lain…`);
   }
-  return { rows: [], used: cands[0]||neOriginal };
+  return { rows: [], used: candidates[0]||neOriginal };
 }
 
-/* ---------- API publik (pakai singleton + progress) ---------- */
-async function checkMetroStatus(ne1, ne2, options={}){
-  const browser = options.browser || await getBrowser();
-  const fA = await createFetcher(browser);
-  const fB = await createFetcher(browser);
-  const logs = [];
-  try{
-    const A = U.up(ne1), B = U.up(ne2);
-    const baseA = U.citySite(A), baseB = U.citySite(B);
-    notifyProgress(options, `🔎 Mencoba varian NE: ${A} vs ${B}…`);
+/* ---------- public API ---------- */
+async function checkMetroStatus(neName1, neName2, options = {}){
+  const browser = options.browser || await launchBrowser();
+  const ownBrowser = !options.browser;
+  const page = await browser.newPage();
 
-    const [resA, resB] = await Promise.all([
-      trySide(fA, A, baseB, B, logs),
-      trySide(fB, B, baseA, A, logs),
-    ]);
+  try{
+    const ne1 = toUpperCaseNEName(neName1);
+    const ne2 = toUpperCaseNEName(neName2);
+    const baseA = baseCitySite(ne1);
+    const baseB = baseCitySite(ne2);
+
+    const logs = [];
+    const sideA = await tryFetchForOneSide(page, ne1, baseB, ne2, logs);
+    const sideB = await tryFetchForOneSide(page, ne2, baseA, ne1, logs);
 
     const text = [
       ...logs,
-      fmtSide(resA.rows, U.citySite(resA.used), baseB),
-      "------------",
-      fmtSide(resB.rows, U.citySite(resB.used), baseA)
+      formatSidePlain(sideA.rows, baseCitySite(sideA.used), baseB),
+      '────────────',
+      formatSidePlain(sideB.rows, baseCitySite(sideB.used), baseA)
     ].join('\n');
 
-    if (options.returnStructured){
+    if (options.returnStructured) {
       return {
         logs,
-        sideA: resA.rows, usedA: resA.used, svcA: resA.svc,
-        sideB: resB.rows, usedB: resB.used, svcB: resB.svc,
+        sideA: sideA.rows, usedA: sideA.used, svcA: sideA.service,
+        sideB: sideB.rows, usedB: sideB.used, svcB: sideB.service,
+        labelA: baseCitySite(sideA.used), labelB: baseCitySite(sideB.used)
       };
     }
     return text;
-  } catch(e){
-    return `❌ Gagal memeriksa\nError: ${e.message}`;
+
+  } catch(err){
+    return `❌ Gagal memeriksa RX Level\nError: ${err.message}`;
   } finally {
-    try{ await fA.close(); }catch{}
-    try{ await fB.close(); }catch{}
+    await page.close().catch(()=>{});
+    if (ownBrowser) await browser.close().catch(()=>{});
   }
 }
 
-async function checkSingleNE(ne, options={}){
-  const browser = options.browser || await getBrowser();
-  const f = await createFetcher(browser);
-  const logs=[];
+/* ---- MODE 1 NE: publik ---- */
+async function checkSingleNE(neName, options = {}){
+  const browser = options.browser || await launchBrowser();
+  const ownBrowser = !options.browser;
+  const page = await browser.newPage();
   try{
-    const A = U.up(ne);
-    const single = await trySingle(f, A, logs);
-    return [...logs, fmtAll(single.rows, U.citySite(single.used))].join('\n');
-  } catch(e){
-    return `❌ Gagal memeriksa NE\nError: ${e.message}`;
+    const ne = toUpperCaseNEName(neName);
+    const logs = [];
+    const res = await tryFetchAllForSingle(page, ne, logs);
+    const label = baseCitySite(res.used);
+    return [...logs, formatAllPlain(res.rows, label)].join('\n');
+  } catch(err){
+    return `❌ Gagal memeriksa NE\nError: ${err.message}`;
   } finally {
-    try{ await f.close(); }catch{}
+    await page.close().catch(()=>{});
+    if (ownBrowser) await browser.close().catch(()=>{});
   }
 }
 
 module.exports = checkMetroStatus;
 module.exports.checkSingleNE = checkSingleNE;
 module.exports.launchBrowser = launchBrowser;
+module.exports._generateCandidates = generateCandidates;
+module.exports._formatSidePlain = formatSidePlain;
+module.exports._filterByOpponent = filterByOpponent;
+module.exports._norm = (s)=>String(s||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
