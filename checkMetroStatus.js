@@ -1,4 +1,4 @@
-// checkMetroStatus.js — FINAL: RAW row + regex + smart service + clear input + RX->PortStatus + RAW <tr> fallback
+// checkMetroStatus.js — alias NE fallback + robust RAW parse + regex match + smart service + clear input + RX->PortStatus
 const puppeteer = require('puppeteer');
 
 const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || null;
@@ -7,10 +7,11 @@ const HEADLESS = process.env.HEADLESS !== 'false';
 const HIGHER_IS_BETTER = process.env.RX_HIGHER_IS_BETTER !== 'false';
 
 /* ---------- helpers ---------- */
-function toUpperCaseNEName(neName){ return String(neName||'').toUpperCase(); }
-function baseLabel(ne){ const p = String(ne).split('-'); return p.length>=2 ? `${p[0]}-${p[1]}` : String(ne); }
+function toUpperCaseNEName(neName){ return String(neName||'').toUpperCase().trim(); }
+function uniq(arr){ return Array.from(new Set(arr.filter(Boolean))); }
+function baseCitySite(ne){ const p = String(ne).toUpperCase().split('-'); return p.length>=2 ? `${p[0]}-${p[1]}` : String(ne).toUpperCase(); }
 function getRxLevelStatusEmoji(rx, thr){
-  if (rx === '-40.00') return '❌';
+  if (String(rx).trim() === '-40.00') return '❌';
   const r = Number(rx), t = Number(thr);
   if (Number.isNaN(r) || Number.isNaN(t)) return '❓';
   return (HIGHER_IS_BETTER ? r>t : r<t) ? '✅' : '⚠️';
@@ -21,6 +22,55 @@ async function launchBrowser(){
     args: ['--no-sandbox','--disable-setuid-sandbox'],
     executablePath: PUPPETEER_EXECUTABLE_PATH || undefined
   });
+}
+
+/* ---------- generator alias NE ---------- */
+/**
+ * Dari satu NE, buat berbagai kandidat:
+ * - original
+ * - tukar EN1 <-> OPT (jika ada)
+ * - H910D <-> 910D
+ * - potong ke 3 segmen pertama
+ * - potong ke 2 segmen (SBY-PRMJ)
+ * - pola umum: CITY-SITE, CITY-SITE-EN1, CITY-SITE-OPT, CITY-SITE-EN1-H910D, CITY-SITE-OPT-H910D, dan variannya tanpa 'H'
+ * - tambahan alias manual dari contoh user (bila cocok)
+ */
+function generateCandidates(ne){
+  const NE = toUpperCaseNEName(ne);
+  const parts = NE.split('-');
+  const citySite = baseCitySite(NE);           // SBY-PRMJ
+  const third = parts[2] || '';                // EN1/OPT/...
+  const tail = parts.slice(2).join('-');
+
+  const swapMode = (s)=> s.replace(/-EN1-/g,'-OPT-').replace(/-OPT-/g,'-EN1-');
+  const swapH = (s)=> s.replace(/H910D/g,'910D').replace(/-910D\b/g,'-H910D');
+
+  const common = [
+    NE,
+    swapMode(NE),
+    swapH(NE),
+    swapH(swapMode(NE)),
+    parts.slice(0,3).join('-'),             // SBY-PRMJ-EN1
+    parts.slice(0,3).join('-').replace(/EN1|OPT/g,m=>m==='EN1'?'OPT':'EN1'),
+    citySite,                               // SBY-PRMJ
+    `${citySite}-${third||'EN1'}`,
+    `${citySite}-${third||'OPT'}`.replace(/EN1|OPT/g,'OPT'),
+    `${citySite}-EN1-H910D`,
+    `${citySite}-OPT-H910D`,
+    `${citySite}-EN1-910D`,
+    `${citySite}-OPT-910D`,
+  ];
+
+  // alias manual (berdasarkan contoh user)
+  const manual = [
+    `${citySite}-OPT-H910D`,
+    `${citySite}-EN1-H910D`,
+    citySite,
+    `${citySite}-OPT-910D`,
+    `${citySite}-EN1-910D`,
+  ];
+
+  return uniq([...common, ...manual]);
 }
 
 /* ---------- pilih service yang aman ---------- */
@@ -43,7 +93,7 @@ async function selectService(page, targets){
   return false;
 }
 
-/* ---------- scraping table ---------- */
+/* ---------- scraping satu query ---------- */
 async function fetchTable(page, neName, serviceLabel){
   await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
     waitUntil:'domcontentloaded', timeout: PAGE_TIMEOUT
@@ -79,94 +129,78 @@ async function fetchTable(page, neName, serviceLabel){
     const rows = await resPage.evaluate(()=>{
       const wanted = ['NE Name','Description','RX Level','RX Threshold','Oper Status','Interface','IF Speed','NE IP'];
       const tables = Array.from(document.querySelectorAll('table'));
-      if(!tables.length) return [];
-
-      // pilih tabel paling relevan
-      let best = { score:-1, table:null };
-      for(const t of tables){
-        const headers = Array.from(t.querySelectorAll('th,td')).map(c=>c.textContent.trim().toLowerCase());
-        const score = wanted.reduce((s,w)=> s + (headers.some(h=>h.includes(w.toLowerCase()))?1:0), 0);
-        if (score > best.score) best = { score, table:t };
-      }
-      if(!best.table) return [];
-
-      // mapping kolom
-      const headerRow = best.table.querySelector('tr');
-      const headerCells = headerRow ? Array.from(headerRow.children) : [];
-      const colIndex = {};
-      headerCells.forEach((cell,i)=>{
-        const txt = cell.textContent.trim().toLowerCase();
-        wanted.forEach(w=>{ if(txt.includes(w.toLowerCase())) colIndex[w]=i; });
-      });
-
-      // ekstrak baris + RAW gabungan
       const data = [];
-      const trs = Array.from(best.table.querySelectorAll('tr')).slice(1);
-      for(const tr of trs){
-        const tds = Array.from(tr.querySelectorAll('td'));
-        if(!tds.length) continue;
 
+      const pushRow = (tds, colIndex)=>{
         const raw = tds.map(td => (td.textContent||'').trim()).join(' | ');
         const row = { __RAW: raw };
-
         Object.entries(colIndex).forEach(([name,idx])=>{
           if (idx < tds.length) row[name] = tds[idx].textContent.trim();
         });
-
-        // heuristik minimal
         if (!row['Description']) {
           const cand = tds.find(td => /to[_\-]|10g/i.test(td.textContent||''));
           if (cand) row['Description'] = cand.textContent.trim();
         }
         if (!row['NE Name'] && tds[1]) row['NE Name'] = tds[1].textContent.trim();
-
         data.push(row);
-      }
-      return data;
-    });
+      };
 
-    // fallback super: raw scan tiap <tr> jika rows kosong
-    if (!rows || !rows.length) {
-      const rawRows = await resPage.evaluate(()=>{
-        const out = [];
-        const trs = Array.from(document.querySelectorAll('tr'));
-        for (const tr of trs) {
-          const tds = Array.from(tr.querySelectorAll('td'));
-          if (!tds.length) continue;
-          out.push({
-            '__RAW': tds.map(td => (td.textContent||'').trim()).join(' | ')
-          });
+      if (tables.length){
+        // pilih tabel paling relevan
+        let best = { score:-1, table:null };
+        for(const t of tables){
+          const headers = Array.from(t.querySelectorAll('th,td')).map(c=>c.textContent.trim().toLowerCase());
+          const score = wanted.reduce((s,w)=> s + (headers.some(h=>h.includes(w.toLowerCase()))?1:0), 0);
+          if (score > best.score) best = { score, table:t };
         }
-        return out;
-      });
+        const table = best.table;
+        if (table){
+          const headerRow = table.querySelector('tr');
+          const headerCells = headerRow ? Array.from(headerRow.children) : [];
+          const colIndex = {};
+          headerCells.forEach((cell,i)=>{
+            const txt = cell.textContent.trim().toLowerCase();
+            wanted.forEach(w=>{ if(txt.includes(w.toLowerCase())) colIndex[w]=i; });
+          });
+
+          const trs = Array.from(table.querySelectorAll('tr')).slice(1);
+          for(const tr of trs){
+            const tds = Array.from(tr.querySelectorAll('td'));
+            if(!tds.length) continue;
+            pushRow(tds, colIndex);
+          }
+          if (data.length) return data;
+        }
+      }
+
+      // Fallback super: scan semua <tr> mentah
+      const rawRows = [];
+      const trs = Array.from(document.querySelectorAll('tr'));
+      for (const tr of trs) {
+        const tds = Array.from(tr.querySelectorAll('td'));
+        if (!tds.length) continue;
+        const raw = tds.map(td => (td.textContent||'').trim()).join(' | ');
+        rawRows.push({ __RAW: raw });
+      }
       return rawRows;
-    }
+    });
 
     return rows;
   } finally { await resPage.close().catch(()=>{}); }
 }
 
-/* ---------- matcher robust ---------- */
+/* ---------- matcher ---------- */
 function norm(s){ return String(s||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim(); }
-function contains(hay, needle){
-  const H = norm(hay), N = norm(needle);
-  if(!N) return false;
-  return H.includes(N);
-}
+function contains(hay, needle){ const H = norm(hay), N = norm(needle); return N ? H.includes(N) : false; }
 function matchesOpponent(text, opponentBase, opponentFull){
   const H = String(text || '');
   const baseN = norm(opponentBase);
   const fullN = norm(opponentFull);
   if (!baseN) return false;
-
   if (contains(H, baseN) || (fullN && contains(H, fullN))) return true;
-
-  // regex: "to[_- ]*<SBY GGKJ>" (dengan toleransi separator)
   const b = baseN.replace(/\s+/g, '[_\\-\\s]*');
   const re = new RegExp(`TO[_\\-\\s]*${b}`, 'i');
-  if (re.test(H)) return true;
-
-  return false;
+  return re.test(H);
 }
 function filterByOpponent(rows, opponentBase, opponentFull){
   return (rows||[]).filter((it)=>{
@@ -188,6 +222,24 @@ function formatSidePlain(rows, labelA, labelB){
   return `▶️ ${labelA} → ${labelB}\n` + rows.map(formatLinePlain).join('\n');
 }
 
+/* ---------- pencarian bertingkat: coba semua kandidat ---------- */
+async function tryFetchForOneSide(page, neOriginal, opponentBase, opponentFull){
+  const candidates = generateCandidates(neOriginal);
+  // 1) RX level untuk tiap kandidat
+  for (const cand of candidates){
+    const rows = await fetchTable(page, cand, 'rx-level');
+    const filtered = filterByOpponent(rows, opponentBase, opponentFull);
+    if (filtered.length) return { rows: filtered, used: cand, service: 'rx-level' };
+  }
+  // 2) Port status untuk tiap kandidat
+  for (const cand of candidates){
+    const rows = await fetchTable(page, cand, 'port status');
+    const filtered = filterByOpponent(rows, opponentBase, opponentFull);
+    if (filtered.length) return { rows: filtered, used: cand, service: 'port-status' };
+  }
+  return { rows: [], used: candidates[0]||neOriginal, service: 'none' };
+}
+
 /* ---------- main ---------- */
 async function checkMetroStatus(neName1, neName2, options = {}){
   const browser = options.browser || await launchBrowser();
@@ -197,35 +249,27 @@ async function checkMetroStatus(neName1, neName2, options = {}){
   try{
     const ne1 = toUpperCaseNEName(neName1);
     const ne2 = toUpperCaseNEName(neName2);
-    const baseA = baseLabel(ne1); // SBY-<...>
-    const baseB = baseLabel(ne2);
+    const baseA = baseCitySite(ne1); // SBY-PRMJ
+    const baseB = baseCitySite(ne2);
 
-    // 1) RX Level
-    let rowsA_rx = await fetchTable(page, ne1, 'rx-level');
-    let rowsB_rx = await fetchTable(page, ne2, 'rx-level');
-    let sideA = filterByOpponent(rowsA_rx, baseB, ne2);
-    let sideB = filterByOpponent(rowsB_rx, baseA, ne1);
-
-    // 2) Fallback -> Port Status bila kosong
-    if(!sideA.length){
-      const rowsA_ps = await fetchTable(page, ne1, 'port status');
-      const pickA = filterByOpponent(rowsA_ps, baseB, ne2);
-      if(pickA.length) sideA = pickA;
-    }
-    if(!sideB.length){
-      const rowsB_ps = await fetchTable(page, ne2, 'port status');
-      const pickB = filterByOpponent(rowsB_ps, baseA, ne1);
-      if(pickB.length) sideB = pickB;
-    }
+    const sideARes = await tryFetchForOneSide(page, ne1, baseB, ne2);
+    const sideBRes = await tryFetchForOneSide(page, ne2, baseA, ne1);
 
     const text = [
-      formatSidePlain(sideA, baseA, baseB),
+      formatSidePlain(sideARes.rows, baseCitySite(sideARes.used), baseB),
       '────────────',
-      formatSidePlain(sideB, baseB, baseA)
+      formatSidePlain(sideBRes.rows, baseCitySite(sideBRes.used), baseA)
     ].join('\n');
 
-    if (options.returnStructured) return { sideA, sideB, labelA: baseA, labelB: baseB };
+    if (options.returnStructured) {
+      return {
+        sideA: sideARes.rows, usedA: sideARes.used, svcA: sideARes.service,
+        sideB: sideBRes.rows, usedB: sideBRes.used, svcB: sideBRes.service,
+        labelA: baseCitySite(sideARes.used), labelB: baseCitySite(sideBRes.used)
+      };
+    }
     return text;
+
   } catch(err){
     return `❌ Gagal memeriksa RX Level\nError: ${err.message}`;
   } finally {
@@ -236,8 +280,8 @@ async function checkMetroStatus(neName1, neName2, options = {}){
 
 module.exports = checkMetroStatus;
 module.exports.launchBrowser = launchBrowser;
+module.exports._generateCandidates = generateCandidates;
 module.exports._formatSidePlain = formatSidePlain;
-module.exports._baseLabel = baseLabel;
 module.exports._filterByOpponent = filterByOpponent;
 module.exports._matchesOpponent = matchesOpponent;
-module.exports._norm = norm;
+module.exports._norm = (s)=>String(s||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
