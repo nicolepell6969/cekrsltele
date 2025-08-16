@@ -181,35 +181,35 @@ bot.on('message', async (msg) => {
 
   // ---- Admin WA controls ----
   if (low === '/wa_status') {
-    if (!isAdmin(fromId)) return bot.sendMessage(chatId, '🚫 Khusus admin.');
+    if (!isAdmin(fromId)) return bot.sendMessage(chatId, '🚫 🚫 Perintah ini khusus admin. Minta admin menambahkan ID kamu via /add_admin <telegram_id>.');
     const enabled = APP.whatsappEnabled;
     const status = enabled ? (waConnected ? 'CONNECTED' : (waStarting ? 'STARTING' : 'DISCONNECTED')) : 'DISABLED';
     return bot.sendMessage(chatId, `📟 WA Status: ${status}\nEnabled: ${enabled}\nAuth Loaded: ${waAuthLoaded}`);
   }
 
   if (low === '/wa_enable') {
-    if (!isAdmin(fromId)) return bot.sendMessage(chatId, '🚫 Khusus admin.');
+    if (!isAdmin(fromId)) return bot.sendMessage(chatId, '🚫 🚫 Perintah ini khusus admin. Minta admin menambahkan ID kamu via /add_admin <telegram_id>.');
     APP.whatsappEnabled = true; saveAppState(APP);
     bot.sendMessage(chatId, '✅ WhatsApp ENABLED. Starting…');
     return startWhatsApp(false);
   }
 
   if (low === '/wa_disable') {
-    if (!isAdmin(fromId)) return bot.sendMessage(chatId, '🚫 Khusus admin.');
+    if (!isAdmin(fromId)) return bot.sendMessage(chatId, '🚫 🚫 Perintah ini khusus admin. Minta admin menambahkan ID kamu via /add_admin <telegram_id>.');
     APP.whatsappEnabled = false; saveAppState(APP);
     stopWhatsApp(false);
     return bot.sendMessage(chatId, '🛑 WhatsApp DISABLED.');
   }
 
   if (low === '/wa_pair') {
-    if (!isAdmin(fromId)) return bot.sendMessage(chatId, '🚫 Khusus admin.');
+    if (!isAdmin(fromId)) return bot.sendMessage(chatId, '🚫 🚫 Perintah ini khusus admin. Minta admin menambahkan ID kamu via /add_admin <telegram_id>.');
     APP.whatsappEnabled = true; saveAppState(APP);
     await bot.sendMessage(chatId, '🔐 Pairing WA dimulai. QR akan dikirim di chat ini.');
     return startWhatsApp(false);
   }
 
   if (low === '/wa_logout') {
-    if (!isAdmin(fromId)) return bot.sendMessage(chatId, '🚫 Khusus admin.');
+    if (!isAdmin(fromId)) return bot.sendMessage(chatId, '🚫 🚫 Perintah ini khusus admin. Minta admin menambahkan ID kamu via /add_admin <telegram_id>.');
     await bot.sendMessage(chatId, '🔓 Logout WA & hapus kredensial…');
     await logoutWhatsApp();
     return bot.sendMessage(chatId, '✅ WA sudah logout. Jalankan /wa_pair untuk pairing ulang.');
@@ -274,7 +274,7 @@ bot.on('message', async (msg) => {
     }
   }
 
-  return bot.sendMessage(chatId, '👍');
+  return bot.sendMessage(chatId, 'ℹ️ Perintah tidak dikenali.\nKetik /help untuk daftar perintah.');
 });
 
 // ===== Callback tombol (run & riwayat) =====
@@ -364,7 +364,7 @@ function isAdmin(chat) {
 
 function requireAdmin(ctx, fn) {
   if (!isAdmin(ctx.chat)) {
-    return bot.sendMessage(ctx.chat.id, '❌ Perintah ini khusus admin.');
+    return bot.sendMessage(ctx.chat.id, '🚫 Perintah ini khusus admin. Minta admin menambahkan ID kamu via /add_admin <telegram_id>.');
   }
   return fn();
 }
