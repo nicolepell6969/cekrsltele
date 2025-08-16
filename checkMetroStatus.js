@@ -1,4 +1,4 @@
-// checkMetroStatus.js — clear input fix + tolerant filter + RX->PortStatus fallback + plain text
+// checkMetroStatus.js — smarter service select + robust matcher + clear input + RX->PortStatus fallback
 const puppeteer = require('puppeteer');
 
 const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || null;
@@ -6,140 +6,176 @@ const PAGE_TIMEOUT = Number(process.env.PAGE_TIMEOUT_MS || 60000);
 const HEADLESS = process.env.HEADLESS !== 'false';
 const HIGHER_IS_BETTER = process.env.RX_HIGHER_IS_BETTER !== 'false';
 
-function toUpperCaseNEName(neName) { return String(neName || '').toUpperCase(); }
-function baseLabel(ne) { const p = String(ne).split('-'); return p.length >= 2 ? `${p[0]}-${p[1]}` : String(ne); }
-function getRxLevelStatusEmoji(rxLevel, rxThreshold) {
-  if (rxLevel === '-40.00') return '❌';
-  const rx = Number(rxLevel), thr = Number(rxThreshold);
-  if (Number.isNaN(rx) || Number.isNaN(thr)) return '❓';
-  return (HIGHER_IS_BETTER ? rx > thr : rx < thr) ? '✅' : '⚠️';
+/* ---------- helpers ---------- */
+function toUpperCaseNEName(neName){ return String(neName||'').toUpperCase(); }
+function baseLabel(ne){ const p = String(ne).split('-'); return p.length>=2 ? `${p[0]}-${p[1]}` : String(ne); }
+function getRxLevelStatusEmoji(rx, thr){
+  if (rx === '-40.00') return '❌';
+  const r = Number(rx), t = Number(thr);
+  if (Number.isNaN(r) || Number.isNaN(t)) return '❓';
+  return (HIGHER_IS_BETTER ? r>t : r<t) ? '✅' : '⚠️';
 }
-async function launchBrowser() {
+async function launchBrowser(){
   return puppeteer.launch({
     headless: HEADLESS,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    args: ['--no-sandbox','--disable-setuid-sandbox'],
     executablePath: PUPPETEER_EXECUTABLE_PATH || undefined
   });
 }
 
-// === CLEAR INPUT FIX + pilih service ===
-async function fetchRxTable(page, neName, service = 'rx-level') {
+/* ---------- select service yang aman ---------- */
+async function selectService(page, targets){
+  // targets: array prioritas, mis. ['rx-level','rx level','rx']
+  const value = await page.evaluate((ts)=>{
+    const sel = document.querySelector('select[name="service"]');
+    if(!sel) return null;
+    const opts = Array.from(sel.options).map(o=>({
+      value:(o.value||'').toLowerCase(),
+      text:(o.textContent||'').toLowerCase()
+    }));
+    for(const raw of ts){
+      const q = String(raw).toLowerCase();
+      const idx = opts.findIndex(o => o.value.includes(q) || o.text.includes(q));
+      if (idx>=0){ sel.selectedIndex = idx; return sel.options[idx].value; }
+    }
+    return null;
+  }, targets);
+  if (value) { await page.select('select[name="service"]', value); return true; }
+  return false;
+}
+
+/* ---------- scraping ---------- */
+async function fetchRxTable(page, neName, serviceLabel){
   await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
-    waitUntil: 'domcontentloaded',
-    timeout: PAGE_TIMEOUT
+    waitUntil:'domcontentloaded', timeout: PAGE_TIMEOUT
   });
 
+  // Clear input lalu isi ulang
   await page.waitForSelector('input[name="nename"]', { timeout: 10000 });
   await page.focus('input[name="nename"]');
-  // Bersihkan field: Ctrl+A lalu Backspace
   await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control');
   await page.keyboard.press('Backspace');
-  // (tambahan aman) set langsung jadi kosong
   await page.$eval('input[name="nename"]', el => el.value = '');
-
   await page.type('input[name="nename"]', neName);
-  await page.select('select[name="service"]', service);
-  await page.click('input[name="submit"]');
 
+  // Pilih service sesuai label
+  const ok = serviceLabel.toLowerCase().includes('rx')
+    ? await selectService(page, ['rx-level','rx level','rx'])
+    : await selectService(page, ['port-status','port status','port']);
+  if (!ok) {
+    // fallback hard-set (kalau gagal cari berdasarkan teks)
+    await page.select('select[name="service"]', serviceLabel);
+  }
+
+  await page.click('input[name="submit"]');
   await page.waitForSelector('iframe#myIframe', { timeout: 10000 });
-  const frameUrl = await page.evaluate(() => {
+
+  const frameUrl = await page.evaluate(()=>{
     const i = document.querySelector('iframe#myIframe');
     return i && i.src ? i.src : null;
   });
-  if (!frameUrl) throw new Error('Frame URL tidak ditemukan');
+  if(!frameUrl) throw new Error('Frame URL tidak ditemukan');
 
   const resPage = await page.browser().newPage();
-  try {
-    await resPage.goto(frameUrl, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT });
+  try{
+    await resPage.goto(frameUrl, { waitUntil:'networkidle2', timeout: PAGE_TIMEOUT });
 
-    const rows = await resPage.evaluate(() => {
+    const rows = await resPage.evaluate(()=>{
       const wanted = ['NE Name','Description','RX Level','RX Threshold','Oper Status','Interface','IF Speed','NE IP'];
       const tables = Array.from(document.querySelectorAll('table'));
-      if (!tables.length) return [];
-      let best = { score: -1, table: null };
-      for (const t of tables) {
-        const headers = Array.from(t.querySelectorAll('th,td')).map(c => c.textContent.trim().toLowerCase());
-        const score = wanted.reduce((s,w)=>s+(headers.some(h=>h.includes(w.toLowerCase()))?1:0),0);
-        if (score > best.score) best = { score, table: t };
+      if(!tables.length) return [];
+      let best = { score:-1, table:null };
+      for(const t of tables){
+        const headers = Array.from(t.querySelectorAll('th,td')).map(c=>c.textContent.trim().toLowerCase());
+        const score = wanted.reduce((s,w)=> s + (headers.some(h=>h.includes(w.toLowerCase()))?1:0), 0);
+        if (score > best.score) best = { score, table:t };
       }
-      if (!best.table) return [];
+      if(!best.table) return [];
       const headerRow = best.table.querySelector('tr');
       const headerCells = headerRow ? Array.from(headerRow.children) : [];
       const colIndex = {};
       headerCells.forEach((cell,i)=>{
         const txt = cell.textContent.trim().toLowerCase();
-        wanted.forEach(w=>{ if (txt.includes(w.toLowerCase())) colIndex[w]=i; });
+        wanted.forEach(w=>{ if(txt.includes(w.toLowerCase())) colIndex[w]=i; });
       });
       const data = [];
       const trs = Array.from(best.table.querySelectorAll('tr')).slice(1);
-      for (const tr of trs) {
-        const tds = Array.from(tr.querySelectorAll('td')); if (!tds.length) continue;
+      for(const tr of trs){
+        const tds = Array.from(tr.querySelectorAll('td')); if(!tds.length) continue;
         const row = {};
-        Object.entries(colIndex).forEach(([name,idx])=>{ if (idx < tds.length) row[name]=tds[idx].textContent.trim(); });
-        if (Object.keys(row).length) data.push(row);
+        Object.entries(colIndex).forEach(([name,idx])=>{
+          if(idx < tds.length) row[name] = tds[idx].textContent.trim();
+        });
+        if(Object.keys(row).length) data.push(row);
       }
       return data;
     });
     return rows;
-  } finally { await resPage.close().catch(()=>{}); }
+  } finally {
+    await resPage.close().catch(()=>{});
+  }
 }
 
-// === Matching lawan lebih toleran (Description atau NE Name) ===
-function matchesOpponent(text, opponentBase) {
-  const t = String(text || '').toUpperCase();
-  const base = String(opponentBase || '').toUpperCase();
-  if (!t) return false;
-  if (t.includes(base)) return true;
-  const token = base.split('-')[1] || base; // segmen ke-2
-  return (
-    t.includes(`-${token}-`) || t.includes(`_${token}_`) ||
-    t.includes(`${token}-`)  || t.includes(`-${token}`)  ||
-    t.includes(` ${token} `) || t.endsWith(` ${token}`)  || t.startsWith(`${token} `)
-  );
+/* ---------- matcher robust ---------- */
+function norm(s){ return String(s||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim(); }
+function contains(hay, needle){
+  const H = norm(hay), N = norm(needle);
+  if(!N) return false;
+  return H.includes(N);
 }
-function filterByOpponent(rows, opponentBase) {
-  return (rows || []).filter(it => matchesOpponent(it['Description'], opponentBase) || matchesOpponent(it['NE Name'], opponentBase));
+function matchesOpponent(text, opponentBase, opponentFull){
+  if (contains(text, opponentBase)) return true;
+  const token = (opponentBase.split('-')[1] || opponentBase);
+  if (contains(text, token)) return true;
+  if (opponentFull && contains(text, opponentFull)) return true;
+  return false;
+}
+function filterByOpponent(rows, opponentBase, opponentFull){
+  return (rows||[]).filter((it)=>{
+    return matchesOpponent(it['Description'], opponentBase, opponentFull) ||
+           matchesOpponent(it['NE Name'],    opponentBase, opponentFull);
+  });
 }
 
-// === Formatter plain text ===
-function formatLinePlain(it) {
+/* ---------- formatter ---------- */
+function formatLinePlain(it){
   const ip=it['NE IP']||'N/A', name=it['NE Name']||'N/A', iface=it['Interface']||'N/A', spd=it['IF Speed']||'N/A';
   const desc=it['Description']||'N/A', rx=it['RX Level']||'N/A', thr=it['RX Threshold']||'N/A', oper=it['Oper Status']||'N/A';
   return `▶️ ${ip} | ${name} | ${iface} | ${spd} | ${desc} | ${rx} | ${thr} | ${oper} ${getRxLevelStatusEmoji(rx,thr)}`;
 }
-function formatSidePlain(rows, labelA, labelB) {
-  if (!rows || !rows.length) return `▶️ ${labelA} → ${labelB}\n(i) tidak ada data relevan`;
+function formatSidePlain(rows, labelA, labelB){
+  if(!rows || !rows.length) return `▶️ ${labelA} → ${labelB}\n(i) tidak ada data relevan`;
   return `▶️ ${labelA} → ${labelB}\n` + rows.map(formatLinePlain).join('\n');
 }
 
-// === Main ===
-async function checkMetroStatus(neName1, neName2, options = {}) {
+/* ---------- main ---------- */
+async function checkMetroStatus(neName1, neName2, options = {}){
   const browser = options.browser || await launchBrowser();
   const ownBrowser = !options.browser;
   const page = await browser.newPage();
 
-  try {
+  try{
     const ne1 = toUpperCaseNEName(neName1);
     const ne2 = toUpperCaseNEName(neName2);
-    const baseA = baseLabel(ne1);
-    const baseB = baseLabel(ne2);
+    const baseA = baseLabel(ne1); // ex: SBY-GGKJ
+    const baseB = baseLabel(ne2); // ex: SBY-PRMJ
 
-    // RX Level dulu
+    // 1) RX Level
     let rowsA_rx = await fetchRxTable(page, ne1, 'rx-level');
     let rowsB_rx = await fetchRxTable(page, ne2, 'rx-level');
-    let sideA = filterByOpponent(rowsA_rx, baseB);
-    let sideB = filterByOpponent(rowsB_rx, baseA);
+    let sideA = filterByOpponent(rowsA_rx, baseB, ne2);
+    let sideB = filterByOpponent(rowsB_rx, baseA, ne1);
 
-    // Fallback Port Status jika kosong
-    if (!sideA.length) {
-      const rowsA_ps = await fetchRxTable(page, ne1, 'port-status');
-      const sideA_ps = filterByOpponent(rowsA_ps, baseB);
-      if (sideA_ps.length) sideA = sideA_ps;
+    // 2) Fallback -> Port Status bila kosong
+    if(!sideA.length){
+      const rowsA_ps = await fetchRxTable(page, ne1, 'port status');
+      const pickA = filterByOpponent(rowsA_ps, baseB, ne2);
+      if(pickA.length) sideA = pickA;
     }
-    if (!sideB.length) {
-      const rowsB_ps = await fetchRxTable(page, ne2, 'port-status');
-      const sideB_ps = filterByOpponent(rowsB_ps, baseA);
-      if (sideB_ps.length) sideB = sideB_ps;
+    if(!sideB.length){
+      const rowsB_ps = await fetchRxTable(page, ne2, 'port status');
+      const pickB = filterByOpponent(rowsB_ps, baseA, ne1);
+      if(pickB.length) sideB = pickB;
     }
 
     const text = [
@@ -150,8 +186,7 @@ async function checkMetroStatus(neName1, neName2, options = {}) {
 
     if (options.returnStructured) return { sideA, sideB, labelA: baseA, labelB: baseB };
     return text;
-
-  } catch (err) {
+  } catch(err){
     return `❌ Gagal memeriksa RX Level\nError: ${err.message}`;
   } finally {
     await page.close().catch(()=>{});
@@ -165,3 +200,4 @@ module.exports._formatSidePlain = formatSidePlain;
 module.exports._baseLabel = baseLabel;
 module.exports._filterByOpponent = filterByOpponent;
 module.exports._matchesOpponent = matchesOpponent;
+module.exports._norm = norm;
