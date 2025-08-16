@@ -1,4 +1,4 @@
-// checkMetroStatus.js — FULL: alias NE fallback + user logs + robust RAW parse + regex + smart service + clear input + RX->PortStatus
+// checkMetroStatus.js — FULL: 2 sisi + Fallback alias + user logs + RAW parse + RX->PortStatus + MODE 1 NE
 const puppeteer = require('puppeteer');
 
 const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || null;
@@ -25,19 +25,11 @@ async function launchBrowser(){
 }
 
 /* ---------- generator alias NE ---------- */
-/**
- * Dari satu NE, buat berbagai kandidat:
- * - original
- * - tukar EN1 <-> OPT
- * - H910D <-> 910D
- * - potong ke 3 segmen, 2 segmen (SBY-PRMJ)
- * - kombinasi umum city-site + EN1/OPT + H910D/910D
- */
 function generateCandidates(ne){
   const NE = toUpperCaseNEName(ne);
   const parts = NE.split('-');
-  const citySite = baseCitySite(NE);          // SBY-PRMJ
-  const third = parts[2] || '';               // EN1/OPT/...
+  const citySite = baseCitySite(NE);
+  const third = parts[2] || '';
 
   const swapMode = (s)=> s.replace(/-EN1-/g,'-OPT-').replace(/-OPT-/g,'-EN1-');
   const swapH = (s)=> s.replace(/H910D/g,'910D').replace(/-910D\\b/g,'-H910D');
@@ -47,9 +39,9 @@ function generateCandidates(ne){
     swapMode(NE),
     swapH(NE),
     swapH(swapMode(NE)),
-    parts.slice(0,3).join('-'),               // SBY-PRMJ-EN1 / -OPT
+    parts.slice(0,3).join('-'),
     parts.slice(0,3).join('-').replace(/EN1|OPT/g,m=>m==='EN1'?'OPT':'EN1'),
-    citySite,                                 // SBY-PRMJ
+    citySite,
     `${citySite}-${third||'EN1'}`,
     `${citySite}-${third||'OPT'}`.replace(/EN1|OPT/g,'OPT'),
     `${citySite}-EN1-H910D`,
@@ -58,7 +50,6 @@ function generateCandidates(ne){
     `${citySite}-OPT-910D`,
   ];
 
-  // alias manual “pasti coba”
   const manual = [
     `${citySite}-OPT-H910D`,
     `${citySite}-EN1-H910D`,
@@ -70,7 +61,7 @@ function generateCandidates(ne){
   return uniq([...common, ...manual]);
 }
 
-/* ---------- pilih service yang aman ---------- */
+/* ---------- pilih service ---------- */
 async function selectService(page, targets){
   const value = await page.evaluate((ts)=>{
     const sel = document.querySelector('select[name="service"]');
@@ -96,7 +87,7 @@ async function fetchTable(page, neName, serviceLabel){
     waitUntil:'domcontentloaded', timeout: PAGE_TIMEOUT
   });
 
-  // Clear input lalu isi ulang
+  // Clear input
   await page.waitForSelector('input[name="nename"]', { timeout: 10000 });
   await page.focus('input[name="nename"]');
   await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control');
@@ -134,7 +125,6 @@ async function fetchTable(page, neName, serviceLabel){
         Object.entries(colIndex).forEach(([name,idx])=>{
           if (idx < tds.length) row[name] = tds[idx].textContent.trim();
         });
-        // heuristik
         if (!row['Description']) {
           const cand = tds.find(td => /to[_\-]|10g/i.test(td.textContent||''));
           if (cand) row['Description'] = cand.textContent.trim();
@@ -187,7 +177,7 @@ async function fetchTable(page, neName, serviceLabel){
   } finally { await resPage.close().catch(()=>{}); }
 }
 
-/* ---------- matcher ---------- */
+/* ---------- matcher dua sisi ---------- */
 function norm(s){ return String(s||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim(); }
 function contains(hay, needle){ const H = norm(hay), N = norm(needle); return N ? H.includes(N) : false; }
 function matchesOpponent(text, opponentBase, opponentFull){
@@ -198,7 +188,6 @@ function matchesOpponent(text, opponentBase, opponentFull){
 
   if (contains(H, baseN) || (fullN && contains(H, fullN))) return true;
 
-  // regex: "to[_- ]*<SBY GGKJ>" (toleran separator)
   const b = baseN.replace(/\s+/g, '[_\\-\\s]*');
   const re = new RegExp(`TO[_\\-\\s]*${b}`, 'i');
   return re.test(H);
@@ -222,12 +211,15 @@ function formatSidePlain(rows, labelA, labelB){
   if(!rows || !rows.length) return `▶️ ${labelA} → ${labelB}\n(i) tidak ada data relevan`;
   return `▶️ ${labelA} → ${labelB}\n` + rows.map(formatLinePlain).join('\n');
 }
+function formatAllPlain(rows, label){
+  if(!rows || !rows.length) return `📋 Semua data: ${label}\n(i) tidak ada data`;
+  return `📋 Semua data: ${label}\n` + rows.map(formatLinePlain).join('\n');
+}
 
-/* ---------- pencarian bertingkat: coba semua kandidat + log ke user ---------- */
+/* ---------- pencarian 2 sisi ---------- */
 async function tryFetchForOneSide(page, neOriginal, opponentBase, opponentFull, logs){
   const candidates = generateCandidates(neOriginal);
 
-  // 1) RX Level untuk tiap kandidat
   for (const cand of candidates){
     const rows = await fetchTable(page, cand, 'rx-level');
     const filtered = filterByOpponent(rows, opponentBase, opponentFull);
@@ -235,7 +227,6 @@ async function tryFetchForOneSide(page, neOriginal, opponentBase, opponentFull, 
     logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" di RX Level, mencoba kandidat lain…`);
   }
 
-  // 2) Port Status untuk tiap kandidat
   for (const cand of candidates){
     const rows = await fetchTable(page, cand, 'port status');
     const filtered = filterByOpponent(rows, opponentBase, opponentFull);
@@ -243,10 +234,32 @@ async function tryFetchForOneSide(page, neOriginal, opponentBase, opponentFull, 
     logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" di Port Status, mencoba kandidat lain…`);
   }
 
-  return { rows: [], used: candidates[0]||neOriginal, service: 'none' };
+  return { rows: [], used: generateCandidates(neOriginal)[0]||neOriginal, service: 'none' };
 }
 
-/* ---------- main ---------- */
+/* ---------- MODE 1 NE: ambil semua data tanpa filter lawan ---------- */
+function dedupeByRaw(rows){
+  const seen = new Set(); const out = [];
+  for (const r of rows||[]) {
+    const key = r.__RAW || JSON.stringify(r);
+    if (!seen.has(key)) { seen.add(key); out.push(r); }
+  }
+  return out;
+}
+async function tryFetchAllForSingle(page, neOriginal, logs){
+  const candidates = generateCandidates(neOriginal);
+  // kumpulkan kombinasi RX + Port untuk kandidat pertama yang menghasilkan data apa pun
+  for (const cand of candidates){
+    const rx = await fetchTable(page, cand, 'rx-level');
+    const ps = await fetchTable(page, cand, 'port status');
+    const merged = dedupeByRaw([...(rx||[]), ...(ps||[])]);
+    if (merged.length) return { rows: merged, used: cand };
+    logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" (RX & Port), mencoba kandidat lain…`);
+  }
+  return { rows: [], used: candidates[0]||neOriginal };
+}
+
+/* ---------- public API ---------- */
 async function checkMetroStatus(neName1, neName2, options = {}){
   const browser = options.browser || await launchBrowser();
   const ownBrowser = !options.browser;
@@ -255,8 +268,8 @@ async function checkMetroStatus(neName1, neName2, options = {}){
   try{
     const ne1 = toUpperCaseNEName(neName1);
     const ne2 = toUpperCaseNEName(neName2);
-    const baseA = baseCitySite(ne1); // contoh: SBY-PRMJ
-    const baseB = baseCitySite(ne2); // contoh: SBY-GGKJ
+    const baseA = baseCitySite(ne1);
+    const baseB = baseCitySite(ne2);
 
     const logs = [];
     const sideA = await tryFetchForOneSide(page, ne1, baseB, ne2, logs);
@@ -287,10 +300,29 @@ async function checkMetroStatus(neName1, neName2, options = {}){
   }
 }
 
+/* ---- MODE 1 NE: publik ---- */
+async function checkSingleNE(neName, options = {}){
+  const browser = options.browser || await launchBrowser();
+  const ownBrowser = !options.browser;
+  const page = await browser.newPage();
+  try{
+    const ne = toUpperCaseNEName(neName);
+    const logs = [];
+    const res = await tryFetchAllForSingle(page, ne, logs);
+    const label = baseCitySite(res.used);
+    return [...logs, formatAllPlain(res.rows, label)].join('\n');
+  } catch(err){
+    return `❌ Gagal memeriksa NE\nError: ${err.message}`;
+  } finally {
+    await page.close().catch(()=>{});
+    if (ownBrowser) await browser.close().catch(()=>{});
+  }
+}
+
 module.exports = checkMetroStatus;
+module.exports.checkSingleNE = checkSingleNE;
 module.exports.launchBrowser = launchBrowser;
 module.exports._generateCandidates = generateCandidates;
 module.exports._formatSidePlain = formatSidePlain;
 module.exports._filterByOpponent = filterByOpponent;
-module.exports._matchesOpponent = matchesOpponent;
 module.exports._norm = (s)=>String(s||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
