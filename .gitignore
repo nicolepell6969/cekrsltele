@@ -24,3 +24,6 @@ auto_replace_and_push.sh
 auto_update_and_push.sh
 clean_backup_history.sh
 clean_backup_history_v2.sh
+
+# WhatsApp auth
+wa_auth/

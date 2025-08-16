@@ -10,9 +10,12 @@
     "postinstall": "node -e \"console.log('> Postinstall complete')\""
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
+    "@adiwajshing/baileys": "^5.0.0",
+    "dotenv": "^16.6.1",
     "node-telegram-bot-api": "^0.66.0",
-    "puppeteer": "^22.13.1"
+    "pino": "^9.9.0",
+    "puppeteer": "^22.13.1",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
