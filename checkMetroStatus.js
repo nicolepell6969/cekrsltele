@@ -268,11 +268,13 @@ async function checkMetroStatus(ne1, ne2, options={}){
       trySide(fA, A, baseB, B, logs),
       trySide(fB, B, baseA, A, logs),
     ]);
-    const text = [...logs,
-      fmtSide(resA.rows, U.citySite(resA.used), baseB),
-      ────────────,
-      fmtSide(resB.rows, U.citySite(resB.used), baseA)
-    ].join(
+const text = [
+  ...logs,
+  fmtSide(resA.rows, U.citySite(resA.used), baseB),
+  "------------",
+  fmtSide(resB.rows, U.citySite(resB.used), baseA)
+].join(
+);
 );
     if (options.returnStructured){
       return { logs, sideA: resA.rows, usedA: resA.used, svcA: resA.svc, sideB: resB.rows, usedB: resB.used, svcB: resB.svc };
@@ -297,12 +299,13 @@ async function checkMetroStatus(ne1, ne2, options={}){
       trySide(fB, B, baseA, A, logs),
     ]);
 
-    const text = [
-      ...logs,
-      fmtSide(resA.rows, U.citySite(resA.used), baseB),
-      '────────────',
-      fmtSide(resB.rows, U.citySite(resB.used), baseA)
-    ].join('\n');
+const text = [
+  ...logs,
+  fmtSide(resA.rows, U.citySite(resA.used), baseB),
+  "------------",
+  fmtSide(resB.rows, U.citySite(resB.used), baseA)
+].join(
+);
 
     if (options.returnStructured){
       return {
