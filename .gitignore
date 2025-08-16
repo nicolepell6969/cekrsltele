@@ -2,3 +2,11 @@ node_modules
 .env
 history.json
 npm-debug.log*
+# --- local helper scripts (jangan publish) ---
+command.sh
+update_and_push.sh
+auto_replace_and_push.sh
+auto_update_and_push.sh
+
+# simpan skrip lokal di folder ini saja (ignored):
+.dev-scripts/
