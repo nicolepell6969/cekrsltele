@@ -44,6 +44,7 @@ function createHistoryButtons(){
 const btnRun1 = (ne) => ({ reply_markup:{ inline_keyboard:[[ {text:'▶️ Jalankan sekarang', callback_data:`runcek1_${ne}`} ]] }});
 const btnRun2 = (a,b)=> ({ reply_markup:{ inline_keyboard:[[ {text:'▶️ Jalankan sekarang', callback_data:`runcek_${a}_${b}`} ]] }});
 
+const OVERALL = Number(process.env.OVERALL_TIMEOUT_MS || 150000);
 /* ===== helper timeout ===== */
 function withTimeout(promise, ms){
   let t; const killer = new Promise((_,rej)=>{ t=setTimeout(()=>rej(new Error(`Timeout ${ms}ms`)), ms); });
@@ -99,7 +100,7 @@ bot.on('callback_query', async (q) => {
       const ne = data.substring('runcek1_'.length);
       await safeSend(chatId, `🔄 Checking: ${ne}…`);
       const start = Date.now();
-      const out   = await withTimeout(checkMetroStatus.checkSingleNE(ne), 90_000);
+      const out   = await withTimeout(checkMetroStatus.checkSingleNE(ne), OVERALL);
       const end   = Date.now();
       addHistory(ne, null, start, end);
       return safeSend(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'})}\n\n${out}`, {
@@ -113,7 +114,10 @@ bot.on('callback_query', async (q) => {
       const start = Date.now();
 
       // PENTING: cek SEKALI SAJA (fungsi sudah mengembalikan 2 sisi)
-      const out = await withTimeout(checkMetroStatus(ne1, ne2, { mode:'normal' }), 90_000);
+      const out = await withTimeout(checkMetroStatus(ne1, ne2, {
+        mode: "normal",
+        progress: async (t)=>{ try{ await safeSend(chatId, t); }catch{} }
+      }), OVERALL);
 
       const end = Date.now();
       addHistory(ne1, ne2, start, end);
