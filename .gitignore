@@ -1,12 +1,58 @@
-node_modules
-.env
-history.json
+# --- Dependencies & caches
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+dist/
+build/
+coverage/
+tmp/
+temp/
+.cache/
+*.cache
+
+# --- Puppeteer / Chromium caches & downloads
+.chromium/
+.chromedriver*
+chrome-profile*/
+**/chrome-linux*/
+**/chrome-win*/
+**/chrome-mac*/
+**/.local-chromium/
+**/.cache/puppeteer/
+
+# --- OS / editor junk
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Logs & runtime artifacts
+*.log
 npm-debug.log*
-# --- local helper scripts (jangan publish) ---
+yarn-error.log*
+pnpm-debug.log*
+*.pid
+*.pid.lock
+history.json
+
+# --- Env & credentials
+.env
+.env.local
+.env.*.local
+
+# --- Local helper scripts (jangan publish)
 command.sh
 update_and_push.sh
 auto_replace_and_push.sh
 auto_update_and_push.sh
-
-# simpan skrip lokal di folder ini saja (ignored):
 .dev-scripts/
+
+# --- Backups / temp
+*.bak
+*.bak_*
+*.tmp
+*.broken*
+.backup-*/
