@@ -351,3 +351,77 @@ if (APP.whatsappEnabled) startWhatsApp(false);
 function quit(){ try{bot.stopPolling();}catch{} try{stopWhatsApp(false);}catch{} setTimeout(()=>process.exit(0),500); }
 process.on("SIGTERM", quit);
 process.on("SIGINT", quit);
+
+// ===== Admin features (help, list, add/remove) =====
+const adminStore = require('./adminStore');
+adminStore.seedFromEnv();
+
+function isAdmin(chat) {
+  // chat bisa berupa objek msg.chat atau angka
+  const id = typeof chat === 'object' ? (chat.id || chat.from?.id) : chat;
+  return adminStore.isAdmin(id);
+}
+
+function requireAdmin(ctx, fn) {
+  if (!isAdmin(ctx.chat)) {
+    return bot.sendMessage(ctx.chat.id, '❌ Perintah ini khusus admin.');
+  }
+  return fn();
+}
+
+// /help — daftar perintah
+bot.on('message', async (msg) => {
+  const text = String(msg.text || '').trim();
+  if (!text) return;
+
+  if (text === '/help' || text === '/start') {
+    const lines = [
+      '🧭 *Daftar Perintah*',
+      '',
+      '• `/cek NE_A NE_B` – cek dua sisi',
+      '• `/cek NE_A` – cek satu NE (gabungan RX & Port)',
+      '• `/history` – riwayat pengecekan',
+      '• `/help` – menampilkan bantuan',
+      '',
+      '*Khusus Admin:*',
+      '• `/admins` – lihat daftar admin',
+      '• `/add_admin <telegram_id>` – tambah admin',
+      '• `/remove_admin <telegram_id>` – hapus admin',
+      '• `/wa_status` – status WhatsApp bot',
+      '• `/wa_enable` – aktifkan WhatsApp bot',
+      '• `/wa_disable` – nonaktifkan WhatsApp bot',
+      '• `/wa_pair` – kirim QR login WhatsApp ke Telegram',
+    ].join('\n');
+    return bot.sendMessage(msg.chat.id, lines, { parse_mode: 'Markdown' });
+  }
+
+  if (text === '/admins') {
+    return requireAdmin(msg, () => {
+      const list = adminStore.listAdmins();
+      const pretty = list.length ? list.map(x => `• ${x}`).join('\n') : '(kosong)';
+      return bot.sendMessage(msg.chat.id, `👮 *Admin terdaftar:*\n${pretty}`, { parse_mode: 'Markdown' });
+    });
+  }
+
+  if (text.startsWith('/add_admin')) {
+    return requireAdmin(msg, () => {
+      const id = text.split(/\s+/)[1];
+      if (!id) return bot.sendMessage(msg.chat.id, '❗ Format: `/add_admin <telegram_id>`', { parse_mode: 'Markdown' });
+      try {
+        adminStore.addAdmin(id);
+        return bot.sendMessage(msg.chat.id, `✅ Admin *${id}* ditambahkan.`, { parse_mode: 'Markdown' });
+      } catch (e) {
+        return bot.sendMessage(msg.chat.id, `❌ Gagal menambah admin: ${e.message}`);
+      }
+    });
+  }
+
+  if (text.startsWith('/remove_admin')) {
+    return requireAdmin(msg, () => {
+      const id = text.split(/\s+/)[1];
+      if (!id) return bot.sendMessage(msg.chat.id, '❗ Format: `/remove_admin <telegram_id>`', { parse_mode: 'Markdown' });
+      adminStore.removeAdmin(id);
+      return bot.sendMessage(msg.chat.id, `🗑️ Admin *${id}* dihapus.`, { parse_mode: 'Markdown' });
+    });
+  }
+});
