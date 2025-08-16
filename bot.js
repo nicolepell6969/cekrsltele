@@ -1,36 +1,17 @@
-// === CRYPTO SHIM for Baileys (WhatsApp) ===
-(() => {
-  try {
-    // Node 18+: webcrypto tersedia via node:crypto
-    const nodeCrypto = require('node:crypto');
-    if (!globalThis.crypto) {
-      globalThis.crypto = nodeCrypto.webcrypto || nodeCrypto;
-    }
-  } catch (e) {
-    try {
-      // Fallback ke crypto lama jika perlu
-      const c = require('crypto');
-      if (!globalThis.crypto) globalThis.crypto = c;
-    } catch {}
-  }
-})();
-require("crypto");
+// === Load ENV + deps
 require('dotenv').config({ path: __dirname + '/.env' });
-
 const fs = require('fs');
 const TelegramBot = require('node-telegram-bot-api');
-const QR = require('qrcode');
 
-// optional modules
-let checkMetroStatus=null;
+// === Modules opsional (tetap pakai file kamu)
+let checkMetroStatus = null;
 try { checkMetroStatus = require('./checkMetroStatus'); }
 catch { console.error('WARN: checkMetroStatus.js tidak ditemukan. /cek akan gagal.'); }
 
-// === admin store ===
-let adminStore=null;
+let adminStore = null;
 try { adminStore = require('./adminStore'); adminStore.seedFromEnv?.(); }
 catch {
-  // fallback admin store sederhana (in-memory + admins.json)
+  // fallback sederhana
   const path = require('path'); const FILE = path.join(__dirname,'admins.json');
   function _read(){ try{ if(!fs.existsSync(FILE)) return {admins:[]}; return JSON.parse(fs.readFileSync(FILE,'utf8')||'{"admins":[]}'); }catch{return{admins:[]}} }
   function _write(o){ try{ fs.writeFileSync(FILE, JSON.stringify(o,null,2)); }catch{} }
@@ -46,334 +27,341 @@ catch {
   adminStore.seedFromEnv();
 }
 
-// === Telegram init ===
+// === Helper
 const token = process.env.TELEGRAM_BOT_TOKEN || '';
 if (!token) { console.error('ERROR: TELEGRAM_BOT_TOKEN kosong di .env'); process.exit(1); }
-const bot = new TelegramBot(token, { polling: { interval: 800, autoStart: true } });
+const bot = new TelegramBot(token, { polling: { interval: 750, autoStart: true } });
 bot.getMe().then(me=>console.log(`Telegram bot: @${me.username} (id:${me.id})`)).catch(e=>console.error('getMe error:', e?.message));
 bot.on('polling_error', (err)=> console.error('polling_error:', err?.response?.body || err?.message || err));
 
-// === WhatsApp (opsional) ===
-let WA_ENABLED = (String(process.env.WA_ENABLED||'false').toLowerCase()==='true');
-let waClient=null, makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion;
-try { ({ default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys')); } catch {}
-async function waStart(notifyChatId){
-  if (waClient || !makeWASocket) return;
-  const { state, saveCreds } = await useMultiFileAuthState(__dirname + '/wa_auth');
-  let version = [2,3000,0];
-  try { ({ version } = await fetchLatestBaileysVersion()); } catch {}
-
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    printQRInTerminal: false,
-    syncFullHistory: false,
-    browser: ['cekrsltele','Chrome','1.0']
-  });
-
-  waClient = sock;
-  sock.ev.on('creds.update', saveCreds);
-
-  sock.ev.on('connection.update', (u) => {
-    const { connection, lastDisconnect, qr } = u;
-
-    // Kirim QR sebagai PNG (fallback ASCII)
-    if (qr && notifyChatId) {
-      (async () => {
-        try {
-          const buf = await QR.toBuffer(qr, { type: 'png', scale: 8, margin: 1 });
-          await bot.sendPhoto(notifyChatId, buf, {
-            caption: '📲 Scan QR WhatsApp berikut (±60 detik). Jika kadaluarsa, kirim /wa_pair lagi.'
-          });
-        } catch (e) {
-          try {
-            const qrt = require('qrcode-terminal');
-            let ascii = ''; qrt.generate(qr, { small: true }, c => ascii = c);
-            await bot.sendMessage(notifyChatId, 'QR WhatsApp (fallback ASCII):\n\n' + ascii);
-          } catch (e2) {
-            await bot.sendMessage(notifyChatId, 'Gagal membuat QR image: ' + (e && e.message ? e.message : e));
-          }
-        }
-      })();
-    }
-
-    if (connection === 'open') {
-      if (notifyChatId) bot.sendMessage(notifyChatId, '✅ WhatsApp tersambung.');
-    } else if (connection === 'close') {
-      const reason = (lastDisconnect && lastDisconnect.error && lastDisconnect.error.message) || 'Terputus';
-      if (notifyChatId) bot.sendMessage(notifyChatId, '⚠️ WhatsApp terputus: ' + reason);
-      waClient = null;
-    }
-  });
+function isAdmin(id){ return adminStore?.isAdmin?.(id) || false; }
+async function notifyAdmins(text){
+  try{
+    const ids = adminStore?.listAdmins?.() || [];
+    for (const sid of ids) { try { await bot.sendMessage(sid, text); } catch {} }
+  }catch{}
+}
+function runWithTimeout(promise, ms=90000){
+  return Promise.race([
+    promise,
+    new Promise((_,rej)=> setTimeout(()=>rej(new Error(`Timeout ${ms}ms`)), ms))
+  ]);
 }
 
-async function waStop(){
-  try { if (waClient?.ws) waClient.ws.close(); } catch {}
-  try { await waClient?.end?.(); } catch {}
-  waClient = null;
-}
-
-function waStatusText(){
-  return 'WA_ENABLED=' + WA_ENABLED + ' | status=' + (waClient ? 'CONNECTED' : 'OFFLINE');
-}
-
-async function waStop(){ try{ if(waClient?.ws) waClient.ws.close(); }catch{} try{ await waClient?.end?.(); }catch{} waClient=null; }
-function waStatusText(){ return 'WA_ENABLED='+WA_ENABLED+' | status='+(waClient?'CONNECTED':'OFFLINE'); }
-
-// === History sederhana ===
-const historyFilePath='./history.json';
-let history=[]; try{ if(fs.existsSync(historyFilePath)){ const raw=fs.readFileSync(historyFilePath,'utf8'); if(raw) history=JSON.parse(raw);} }catch{ history=[]; }
-function saveHistory(){ try{ fs.writeFileSync(historyFilePath, JSON.stringify(history,null,2)); }catch{} }
-function isDuplicate(ne1,ne2){ return history.some(h => (h.ne1===ne1&&h.ne2===ne2)||(h.ne1===ne2&&h.ne2===ne1)); }
+// === History minimal
+const historyFilePath = './history.json';
+let history = [];
+try { if (fs.existsSync(historyFilePath)) { const raw = fs.readFileSync(historyFilePath); if (raw) history = JSON.parse(raw); } } catch(e){ history = []; }
+function saveHistory(){ try{ fs.writeFileSync(historyFilePath, JSON.stringify(history,null,2)); } catch(e){} }
+function isDuplicate(ne1, ne2){ return history.some(h => (h.ne1===ne1 && h.ne2===ne2) || (h.ne1===ne2 && h.ne2===ne1)); }
 function addHistory(ne1, ne2, result, name, startTime, endTime){
-  if (ne2 && isDuplicate(ne1,ne2)) return;
-  const timestamp=new Date(startTime).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'});
-  const shortNe1=(String(ne1).split('-')[1]||ne1).slice(0,4);
-  const shortNe2=ne2?(String(ne2).split('-')[1]||ne2).slice(0,4):'';
-  const duration=(endTime-startTime)/1000;
-  history.push({name,ne1,ne2:ne2||'',shortNe1,shortNe2,result,timestamp,duration});
+  if (ne2 && isDuplicate(ne1, ne2)) return;
+  const ts = new Date(startTime).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  const shortNe1 = (ne1.split('-')[1]||ne1).slice(0,4);
+  const shortNe2 = ne2 ? (ne2.split('-')[1]||ne2).slice(0,4) : '';
+  const duration = (endTime - startTime) / 1000;
+  history.push({ name, ne1, ne2: ne2||'', shortNe1, shortNe2, result, ts, duration });
   saveHistory();
 }
-
-// === utils ===
-function runWithTimeout(promise, ms, tag='op'){
-  return Promise.race([ promise, new Promise((_,rej)=>setTimeout(()=>rej(new Error('Timeout '+ms+'ms @'+tag)), ms)) ]);
-}
-function requireAdmin(msg, fn){
-  const id = (msg.from && msg.from.id) || msg.chat?.id;
-  if (!adminStore.isAdmin(id)) return bot.sendMessage(msg.chat.id,'Perintah ini khusus admin.');
-  return fn();
+function createHistoryButtons(){
+  return history.map((entry, idx) => ([
+    { text: `Ulangi ${entry.shortNe1}${entry.shortNe2?` ↔ ${entry.shortNe2}`:''}`, callback_data: `retry_${idx}` },
+    { text: `Hapus ${entry.shortNe1}${entry.shortNe2?` ↔ ${entry.shortNe2}`:''}`, callback_data: `delete_${idx}` },
+  ]));
 }
 
-// === Message handler ===
-bot.on('message', async (msg)=>{
-  const chatId=msg.chat.id;
-  const text=String(msg.text||'').trim();
-  const low=text.toLowerCase();
+// === FREE TEXT parsing (pakai textToCommand.js)
+let buildCekCommandFromText=null;
+try { ({ buildCekCommandFromText } = require('./textToCommand')); }
+catch { buildCekCommandFromText = (t)=>({cmd:null, list:[], note:'parser tidak ada'}); }
 
-  const PUBLIC_CMDS = new Set(['/cek','/history','/help','/start']);
-  const ADMIN_CMDS  = new Set(['/admins','/add_admin','/remove_admin','/wa_status','/wa_enable','/wa_disable','/wa_pair']);
+// === Command list
+const PUBLIC_COMMANDS = ['/help','/cek','/history'];
+const ADMIN_COMMANDS  = ['/add_admin','/remove_admin','/admins']; // WA commands sengaja tidak disini agar tidak mengganggu
 
-  const isCommand = text.startsWith('/');
-  const cmdOnly   = isCommand ? text.split(/\s+/,1)[0].toLowerCase() : '';
+// === Handler pesan
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const text = (msg.text || '').trim();
+  const low  = text.toLowerCase();
 
-  // Warning hanya untuk command tidak dikenal (bukan text biasa)
-  if (isCommand && !PUBLIC_CMDS.has(cmdOnly) && !ADMIN_CMDS.has(cmdOnly)) {
-    return bot.sendMessage(chatId, "Perintah tidak dikenali.\nKetik /help untuk daftar perintah.");
+  // ===== Admin: add/remove/list =====
+  if (low.startsWith('/add_admin') && isAdmin(chatId)) {
+    const id = String((text.split(/\s+/)[1]||'')).trim();
+    if (!id) return bot.sendMessage(chatId, 'Format: /add_admin <TELEGRAM_USER_ID>');
+    try { adminStore.addAdmin(id); return bot.sendMessage(chatId, `✅ Admin ditambahkan: ${id}`); }
+    catch(e){ return bot.sendMessage(chatId, `❌ Gagal tambah admin: ${e.message}`); }
+  }
+  if (low.startsWith('/remove_admin') && isAdmin(chatId)) {
+    const id = String((text.split(/\s+/)[1]||'')).trim();
+    if (!id) return bot.sendMessage(chatId, 'Format: /remove_admin <TELEGRAM_USER_ID>');
+    try { adminStore.removeAdmin(id); return bot.sendMessage(chatId, `✅ Admin dihapus: ${id}`); }
+    catch(e){ return bot.sendMessage(chatId, `❌ Gagal hapus admin: ${e.message}`); }
+  }
+  if (low === '/admins' && isAdmin(chatId)) {
+    const ids = adminStore.listAdmins();
+    return bot.sendMessage(chatId, `👑 Admins:\n- ${ids.join('\n- ') || '(kosong)'}`);
   }
 
-  // /help
-  if (low==='/help' || low==='/start'){
-    const help=[
-      'Daftar Perintah:',
-      '/cek NE_A NE_B   → cek dua sisi',
-      '/cek NE_A        → cek satu NE (RX & Port)',
-      '/history         → riwayat pengecekan',
-      '',
-      'Admin:',
-      '/admins, /add_admin <id>, /remove_admin <id>',
-      '/wa_status, /wa_enable, /wa_disable, /wa_pair'
-    ].join('\n');
-    return bot.sendMessage(chatId, help);
+  // ===== /help
+  if (low === '/help') {
+    return bot.sendMessage(chatId,
+`📖 *Daftar Perintah*
+/cek <NE1> [NE2]  — Cek 1 sisi (NE1) atau 2 sisi (NE1↔NE2)
+/history          — Tombol riwayat cek
+/help             — Bantuan
+
+Tips:
+• Kirim teks bebas berisi log/diagnosa — bot akan mendeteksi NE dan menampilkan tombol "▶️ Jalankan sekarang".`, { parse_mode:'Markdown' });
   }
 
-  // Admin
-  if (low==='/admins'){
-    return requireAdmin(msg, ()=> bot.sendMessage(chatId, 'Admin:\n'+(adminStore.listAdmins().map(a=>'- '+a).join('\n')||'(kosong)')));
-  }
-  if (low.startsWith('/add_admin')){
-    return requireAdmin(msg, ()=>{
-      const id=text.split(/\s+/,2)[1];
-      if(!id) return bot.sendMessage(chatId,'Format: /add_admin <telegram_id>');
-      try { adminStore.addAdmin(id); bot.sendMessage(chatId,'Admin '+id+' ditambahkan.'); }
-      catch(e){ bot.sendMessage(chatId,'Gagal: '+e.message); }
+  // ===== /history
+  if (low === '/history') {
+    if (!history.length) return bot.sendMessage(chatId, '❌ Belum ada riwayat pengecekan.');
+    return bot.sendMessage(chatId, '👉 Klik di bawah untuk cek ulang atau hapus riwayat:', {
+      reply_markup: { inline_keyboard: createHistoryButtons() }
     });
   }
-  if (low.startsWith('/remove_admin')){
-    return requireAdmin(msg, ()=>{
-      const id=text.split(/\s+/,2)[1];
-      if(!id) return bot.sendMessage(chatId,'Format: /remove_admin <telegram_id>');
-      adminStore.removeAdmin(id); bot.sendMessage(chatId,'Admin '+id+' dihapus.');
-    });
-  }
-  if (low==='/wa_status'){ return requireAdmin(msg, ()=> bot.sendMessage(chatId, waStatusText())); }
-  if (low==='/wa_enable'){ return requireAdmin(msg, async()=>{ WA_ENABLED=true; bot.sendMessage(chatId,'WA enabled. Menghubungkan...'); await waStart(chatId); }); }
-  if (low==='/wa_disable'){ return requireAdmin(msg, async()=>{ WA_ENABLED=false; await waStop(); bot.sendMessage(chatId,'WA disabled.'); }); }
-  if (low==='/wa_pair'){ return requireAdmin(msg, async()=>{ if(!WA_ENABLED) bot.sendMessage(chatId,'WA_ENABLED masih false. /wa_enable dulu.'); await waStart(chatId); }); }
 
-  // /history
-  if (low==='/history'){
-    if (!history.length) return bot.sendMessage(chatId,'Belum ada riwayat.');
-    const buttons = history.map((h,i)=>[
-      {text:`Ulangi ${h.shortNe1}${h.shortNe2?` ↔ ${h.shortNe2}`:''}`, callback_data:`retry_${i}`},
-      {text:`Hapus ${h.shortNe1}${h.shortNe2?` ↔ ${h.shortNe2}`:''}`,  callback_data:`delete_${i}`}
-    ]);
-    return bot.sendMessage(chatId,'Klik untuk cek ulang / hapus:', { reply_markup:{ inline_keyboard: buttons }});
-  }
-
-  // ===== /cek (robust 1 NE & 2 NE) =====
+  // ===== /cek (robust: /cek[spasi|akhir])
   if (/^\/cek(\s+|$)/.test(low)) {
-    if (!checkMetroStatus) return bot.sendMessage(chatId,'checkMetroStatus.js tidak tersedia di server.');
+    const tail  = text.slice(4); // buang '/cek'
+    const parts = tail.split(/\s+/).map(s=>s.trim()).filter(Boolean);
 
-    // Buang '/cek' lalu split argumen longgar (multispasi/newline)
-    const tail = text.replace(/^\/cek/, '');
-    const parts = tail.split(/\s+/).map(x=>x.trim()).filter(Boolean);
+    if (parts.length === 0) {
+      return bot.sendMessage(chatId, '❗ Format salah.\nContoh:\n• /cek SBY-AAA-EN1-H910D\n• /cek SBY-AAA-EN1-H910D SBY-BBB-OPT-H910D');
+    }
 
     // 1 NE
-    if (parts.length===1){
+    if (parts.length === 1) {
       const ne = parts[0];
-      await bot.sendMessage(chatId,'Cek satu NE: '+ne+' ...');
-      try{
-        const start=Date.now();
+      await bot.sendMessage(chatId, `🔄 Cek satu NE: ${ne}…`);
+      try {
+        const start  = Date.now();
         const result = await runWithTimeout(
-          checkMetroStatus.checkSingleNE(ne),
-          Number(process.env.PAGE_TIMEOUT_MS||90000),
-          'cek-1NE'
+          checkMetroStatus && checkMetroStatus.checkSingleNE
+            ? checkMetroStatus.checkSingleNE(ne)
+            : Promise.reject(new Error('checkMetroStatus.checkSingleNE tidak tersedia')), 90000
         );
-        const end=Date.now();
+        const end = Date.now();
         addHistory(ne, null, result, ne, start, end);
-        return bot.sendMessage(chatId, `Checked Time: ${new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'})}\n\n${result||'(tidak ada data diterima)'}`);
+        return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${result}`);
       } catch(e){
-        return bot.sendMessage(chatId, 'Gagal cek 1 NE: '+(e?.message||String(e)));
+        await notifyAdmins(`🚨 /cek 1 NE gagal oleh ${chatId}\nNE: ${ne}\nError: ${e.message}`);
+        return bot.sendMessage(chatId, `❌ Gagal cek NE.\nError: ${e.message}`);
       }
     }
 
-    // 2 NE
-    if (parts.length>=2){
-      const ne1=parts[0], ne2=parts[1];
-      await bot.sendMessage(chatId,'ONCEK, DITUNGGU');
-      try{
-        const start=Date.now();
-        const r1 = await runWithTimeout(checkMetroStatus(ne1,ne2,{mode:'normal'}), Number(process.env.PAGE_TIMEOUT_MS||90000), 'cek-A');
-        const r2 = await runWithTimeout(checkMetroStatus(ne2,ne1,{mode:'normal'}), Number(process.env.PAGE_TIMEOUT_MS||90000), 'cek-B');
-        const end=Date.now();
+    // 2 NE (ambil 2 pertama saja)
+    const ne1 = parts[0], ne2 = parts[1];
+    await bot.sendMessage(chatId, `🔄 Cek dua sisi: ${ne1} ↔ ${ne2}…`);
+    try {
+      const start = Date.now();
+      const r1 = await runWithTimeout(checkMetroStatus(ne1, ne2, { mode: 'normal' }), 90000);
+      const r2 = await runWithTimeout(checkMetroStatus(ne2, ne1, { mode: 'normal' }), 90000);
+      const end = Date.now();
+      const combined = `${r1}\n────────────\n${r2}`;
+      addHistory(ne1, ne2, combined, `${ne1} ${ne2}`, start, end);
+      return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${combined}`);
+    } catch(e){
+      await notifyAdmins(`🚨 /cek 2 NE gagal oleh ${chatId}\nNE1: ${ne1}\nNE2: ${ne2}\nError: ${e.message}`);
+      return bot.sendMessage(chatId, `❌ Gagal cek 2 sisi.\nError: ${e.message}`);
+    }
+  }
+
+  // ===== Callback buttons (cek ulang / hapus / run dari parsing)
+  // run dua sisi dari tombol
+  if (msg.data) { /* no-op; handled in callback_query */ }
+
+  // ===== FREE TEXT: parsing -> tampilkan tombol (tidak auto-run)
+  if (!text.startsWith('/')) {
+    try {
+      const { cmd, list } = buildCekCommandFromText(text);
+      if (list && list.length === 1) {
+        const ne = list[0];
+        return bot.sendMessage(chatId, `NE terdeteksi: ${ne}\n\nGunakan perintah ini:\n/cek ${ne}`, {
+          reply_markup: { inline_keyboard: [[{ text: '▶️ Jalankan sekarang', callback_data: `run1_${ne}` }]] }
+        });
+      }
+      if (list && list.length >= 2) {
+        const a = list[0], b = list.find(x=>x!==a) || list[1];
+        return bot.sendMessage(chatId, `NE terdeteksi: ${list.join(', ')}\n\nGunakan perintah ini:\n/cek ${a} ${b}`, {
+          reply_markup: { inline_keyboard: [[{ text: '▶️ Jalankan sekarang', callback_data: `run2_${a}_${b}` }]] }
+        });
+      }
+    } catch(e){
+      await notifyAdmins(`ℹ️ Parser teks gagal: ${e.message}`);
+    }
+    // Jika bukan perintah & tidak ada NE terdeteksi: diam saja
+    return;
+  }
+
+  // ===== Warning perintah tak dikenal (hanya untuk public command; admin command dikecualikan)
+  const isAdminLike = ADMIN_COMMANDS.some(c => low.startsWith(c)) || low.startsWith('/wa_');
+  const isKnownPublic = PUBLIC_COMMANDS.includes(low.split(/\s+/)[0]);
+  if (text.startsWith('/') && !isKnownPublic && !isAdminLike) {
+    return bot.sendMessage(chatId, 'ℹ️ Perintah tidak dikenali.\nKetik /help untuk daftar perintah.');
+  }
+});
+
+// ===== callback_query (tombol)
+bot.on('callback_query', async (query) => {
+  const { data, message } = query;
+  const chatId = message.chat.id;
+  try {
+    await bot.answerCallbackQuery(query.id);
+
+    if (data.startsWith('run1_')) {
+      const ne = data.substring('run1_'.length);
+      await bot.sendMessage(chatId, `🔄 Checking: ${ne}…`);
+      const start = Date.now();
+      try {
+        const result = await runWithTimeout(
+          checkMetroStatus && checkMetroStatus.checkSingleNE
+            ? checkMetroStatus.checkSingleNE(ne)
+            : Promise.reject(new Error('checkMetroStatus.checkSingleNE tidak tersedia')), 90000
+        );
+        const end = Date.now();
+        addHistory(ne, null, result, ne, start, end);
+        return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${result}`);
+      } catch(e){
+        await notifyAdmins(`🚨 run1 gagal: ${ne}\nError: ${e.message}`);
+        return bot.sendMessage(chatId, `❌ Gagal cek NE.\nError: ${e.message}`);
+      }
+    }
+
+    if (data.startsWith('run2_')) {
+      const parts = data.substring('run2_'.length).split('_');
+      const ne1 = parts[0], ne2 = parts.slice(1).join('_'); // jaga-jaga kalau NE mengandung underscore
+      await bot.sendMessage(chatId, `🔄 Checking: ${ne1} ↔ ${ne2}…`);
+      const start = Date.now();
+      try {
+        const r1 = await runWithTimeout(checkMetroStatus(ne1, ne2, { mode: 'normal' }), 90000);
+        const r2 = await runWithTimeout(checkMetroStatus(ne2, ne1, { mode: 'normal' }), 90000);
+        const end = Date.now();
         const combined = `${r1}\n────────────\n${r2}`;
         addHistory(ne1, ne2, combined, `${ne1} ${ne2}`, start, end);
-        return bot.sendMessage(chatId, `Checked Time: ${new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'})}\n\n${combined}`, {
-          reply_markup:{ inline_keyboard: [[{ text:'Cek ulang', callback_data:`retry_last_${history.length-1}` }]] }
-        });
+        return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${combined}`);
       } catch(e){
-        return bot.sendMessage(chatId,'Gagal cek 2 sisi: '+(e?.message||String(e)));
+        await notifyAdmins(`🚨 run2 gagal: ${ne1} ↔ ${ne2}\nError: ${e.message}`);
+        return bot.sendMessage(chatId, `❌ Gagal cek 2 sisi.\nError: ${e.message}`);
       }
     }
 
-    return bot.sendMessage(chatId,'Format: /cek <NE1> [NE2]');
-  }
-
-  // Teks bebas: biarkan diam (tidak memunculkan warning)
-});
-
-// === callback buttons ===
-bot.on('callback_query', async (q)=>{
-  const { data, message } = q; const chatId=message.chat.id;
-  try{
-    await bot.answerCallbackQuery(q.id);
-
-    if (data.startsWith('runcek_')){
-      const [, ne1, ne2] = data.split('_');
-      await bot.sendMessage(chatId, 'Checking: '+ne1+' ↔ '+ne2+' ...');
-      const r1 = await checkMetroStatus(ne1,ne2,{mode:'normal'});
-      const r2 = await checkMetroStatus(ne2,ne1,{mode:'normal'});
-      const end = Date.now();
-      return bot.sendMessage(chatId, `Checked Time: ${new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'})}\n\n${r1}\n────────────\n${r2}`, {
-        reply_markup:{ inline_keyboard: [[{ text:'Cek ulang', callback_data:`runcek_${ne1}_${ne2}` }]] }
-      });
-    }
-
-    if (data.startsWith('runcek1_')){
-      const ne = data.substring('runcek1_'.length);
-      await bot.sendMessage(chatId, 'Checking: '+ne+' ...');
-      const result = await checkMetroStatus.checkSingleNE(ne);
-      const end = Date.now();
-      return bot.sendMessage(chatId, `Checked Time: ${new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'})}\n\n${result}`, {
-        reply_markup:{ inline_keyboard: [[{ text:'Cek ulang', callback_data:`runcek1_${ne}` }]] }
-      });
-    }
-
-    if (data.startsWith('retry_')){
-      let index=null;
-      if (data.startsWith('retry_last_')) index=parseInt(data.split('_').pop(),10);
-      else index=parseInt(data.split('_')[1],10);
-      const entry=history[index];
+    if (data.startsWith('retry_')) {
+      const index = data.startsWith('retry_last_') ? parseInt(data.split('_').pop(),10) : parseInt(data.split('_')[1],10);
+      const entry = history[index];
       if (!entry) return;
-      if (!entry.ne2){
-        await bot.sendMessage(chatId,'Checking: '+entry.ne1+' ...');
-        const result=await checkMetroStatus.checkSingleNE(entry.ne1);
-        const end=Date.now();
-        return bot.sendMessage(chatId, `Checked Time: ${new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'})}\n\n${result}`, {
-          reply_markup:{ inline_keyboard: [[{ text:'Cek ulang', callback_data:`runcek1_${entry.ne1}` }]] }
-        });
+      if (!entry.ne2) {
+        await bot.sendMessage(chatId, `🔄 Checking: ${entry.ne1}…`);
+        const start = Date.now();
+        try {
+          const result = await runWithTimeout(checkMetroStatus.checkSingleNE(entry.ne1), 90000);
+          const end = Date.now();
+          addHistory(entry.ne1, null, result, entry.ne1, start, end);
+          return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${result}`);
+        } catch(e){
+          await notifyAdmins(`🚨 retry 1 gagal: ${entry.ne1}\nError: ${e.message}`);
+          return bot.sendMessage(chatId, `❌ Gagal cek NE.\nError: ${e.message}`);
+        }
       } else {
-        await bot.sendMessage(chatId,'Checking: '+entry.ne1+' ↔ '+entry.ne2+' ...');
-        const r1=await checkMetroStatus(entry.ne1, entry.ne2, {mode:'normal'});
-        const r2=await checkMetroStatus(entry.ne2, entry.ne1, {mode:'normal'});
-        const end=Date.now();
-        return bot.sendMessage(chatId, `Checked Time: ${new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'})}\n\n${r1}\n────────────\n${r2}`, {
-          reply_markup:{ inline_keyboard: [[{ text:'Cek ulang', callback_data:`runcek_${entry.ne1}_${entry.ne2}` }]] }
-        });
+        await bot.sendMessage(chatId, `🔄 Checking: ${entry.ne1} ↔ ${entry.ne2}…`);
+        const start = Date.now();
+        try {
+          const r1 = await runWithTimeout(checkMetroStatus(entry.ne1, entry.ne2, { mode: 'normal' }), 90000);
+          const r2 = await runWithTimeout(checkMetroStatus(entry.ne2, entry.ne1, { mode: 'normal' }), 90000);
+          const end = Date.now();
+          const combined = `${r1}\n────────────\n${r2}`;
+          addHistory(entry.ne1, entry.ne2, combined, `${entry.ne1} ${entry.ne2}`, start, end);
+          return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${combined}`);
+        } catch(e){
+          await notifyAdmins(`🚨 retry 2 gagal: ${entry.ne1} ↔ ${entry.ne2}\nError: ${e.message}`);
+          return bot.sendMessage(chatId, `❌ Gagal cek 2 sisi.\nError: ${e.message}`);
+        }
       }
     }
 
-    if (data.startsWith('delete_')){
-      const index=parseInt(data.split('_')[1],10);
-      const entry=history[index];
-      if (!entry) return;
-      history.splice(index,1); saveHistory();
-      return bot.sendMessage(chatId, `Riwayat ${entry.ne1}${entry.ne2?` ↔ ${entry.ne2}`:''} dihapus.`);
+    if (data.startsWith('delete_')) {
+      const index = parseInt(data.split('_')[1],10);
+      const entry = history[index];
+      if (entry) {
+        history.splice(index,1);
+        saveHistory();
+        return bot.sendMessage(chatId, `✅ Riwayat ${entry.ne1}${entry.ne2?` ↔ ${entry.ne2}`:''} dihapus.`);
+      }
     }
-  } catch(e){
+  } catch (e) {
     console.error('callback error:', e);
-    bot.answerCallbackQuery(q.id,{ text:'Terjadi kesalahan. Coba lagi.', show_alert:true }).catch(()=>{});
+    await notifyAdmins(`🚨 callback error: ${e.message}`);
+    bot.answerCallbackQuery(query.id, { text: '❌ Terjadi kesalahan. Coba lagi!', show_alert: true });
   }
 });
 
-// Graceful shutdown
-function quit(){ try{bot.stopPolling();}catch{} setTimeout(()=>process.exit(0),500); }
-process.on('SIGTERM', quit);
-process.on('SIGINT', quit);
+// === END bot.js
 
-// Autostart WA jika WA_ENABLED=true
-if (WA_ENABLED) { waStart(null).catch(()=>{}); }
 
-// ===== DEBUG: kirim error ke admin via Telegram =====
-function _getAdminIds(){
-  try {
-    const list = (adminStore && typeof adminStore.listAdmins==='function')
-      ? adminStore.listAdmins()
-      : [];
-    return (list||[]).map(x=>String(x)).filter(Boolean);
-  } catch { return []; }
-}
-function notifyAdmins(text){
-  try {
-    const ids = _getAdminIds();
-    if (!ids.length) return;
-    const msg = `⚠️ [DEBUG ERROR]\n${text}`;
-    for (const id of ids) { bot.sendMessage(id, msg).catch(()=>{}); }
-  } catch {}
-}
+// ===== /cek (robust 1 NE & 2 NE) =====
+  if (/^\/cek(\s+|$)/.test(low)) {
+    if (!checkMetroStatus) return bot.sendMessage(chatId,'❌ checkMetroStatus.js tidak tersedia di server.');
 
-// polling error → kirim ke admin juga
-try {
-  bot.on('polling_error', (err)=>{
-    const body = (err && err.response && err.response.body) ? err.response.body : (err && err.message ? err.message : String(err));
-    notifyAdmins(`[polling_error] ${body}`);
-  });
-} catch {}
+    // buang '/cek' lalu pisahkan argumen longgar
+    const tail  = text.replace(/^\/cek/, '');
+    const parts = tail.split(/\s+/).map(x=>x.trim()).filter(Boolean);
 
-// global handlers
-process.on('uncaughtException', (err)=>{
-  const msg = (err && err.stack) ? err.stack : String(err);
-  try { console.error('uncaughtException', err); } catch {}
-  notifyAdmins(`Uncaught Exception:\n${msg}`);
-});
-process.on('unhandledRejection', (reason, p)=>{
-  const msg = (reason && reason.stack) ? reason.stack : String(reason);
-  try { console.error('unhandledRejection', reason); } catch {}
-  notifyAdmins(`Unhandled Rejection:\n${msg}`);
-});
+    // === 1 NE ===
+    if (parts.length === 1) {
+      const ne = parts[0];
+      await bot.sendMessage(chatId, '🔄 Cek satu NE: ' + ne + ' …');
+      try {
+        const start = Date.now();
+        const result = await Promise.race([
+          checkMetroStatus.checkSingleNE(ne),
+          new Promise((_,rej)=>setTimeout(()=>rej(new Error('Timeout 90s @cek-1NE')), 90000))
+        ]);
+        const end = Date.now();
+        const payload = result && String(result).trim().length
+          ? result
+          : '(i) tidak ada data dikembalikan dari server';
+        addHistory(ne, null, payload, ne, start, end);
+        return bot.sendMessage(
+          chatId,
+          '🕛Checked Time: ' + new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'}) + '\n\n' + payload
+        );
+      } catch (e) {
+        // kirim debug ke admin agar kelihatan di PM
+        try { bot.sendAdminDebug?.('(/cek 1 NE) ' + (e?.stack||e?.message||String(e))); } catch {}
+        return bot.sendMessage(chatId, '❌ Gagal cek 1 NE: ' + (e?.message || String(e)));
+      }
+    }
 
-// util opsional untuk kirim debug manual dari tempat lain:
-// bot.sendAdminDebug?.('teks debug');
-// atau panggil notifyAdmins('pesan');
-bot.sendAdminDebug = (text)=> { try { notifyAdmins(text); } catch {} };
+    // === 2 NE (ambil dua sisi) ===
+    if (parts.length >= 2) {
+      const ne1 = parts[0], ne2 = parts[1];
+      await bot.sendMessage(chatId, '🔄 ONCEK, DITUNGGU');
+      try {
+        const start = Date.now();
+        const r1 = await Promise.race([
+          checkMetroStatus(ne1, ne2, { mode:'normal' }),
+          new Promise((_,rej)=>setTimeout(()=>rej(new Error('Timeout 90s @cek-A')), 90000))
+        ]);
+        const r2 = await Promise.race([
+          checkMetroStatus(ne2, ne1, { mode:'normal' }),
+          new Promise((_,rej)=>setTimeout(()=>rej(new Error('Timeout 90s @cek-B')), 90000))
+        ]);
+        const end = Date.now();
+        const combined = String(r1||'') + '\n────────────\n' + String(r2||'');
+        addHistory(ne1, ne2, combined, ne1+' '+ne2, start, end);
+        return bot.sendMessage(
+          chatId,
+          '🕛Checked Time: ' + new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'}) + '\n\n' + combined,
+          { reply_markup:{ inline_keyboard: [[{ text:'🔁 CEK ULANG', callback_data:'retry_last_' + (history.length-1) }]] } }
+        );
+      } catch (e) {
+        try { bot.sendAdminDebug?.('(/cek 2 NE) ' + (e?.stack||e?.message||String(e))); } catch {}
+        return bot.sendMessage(chatId, '❌ Gagal cek 2 sisi: ' + (e?.message || String(e)));
+      }
+    }
+
+    return bot.sendMessage(chatId, '❗ Format: /cek <NE1> [NE2]');
+  }
+
