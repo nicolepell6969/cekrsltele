@@ -1,138 +1,245 @@
+require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const checkMetroStatus = require('./checkMetroStatus');
-const { buildCekCommandFromText } = require('./textToCommand');
+const { launchBrowser } = require('./checkMetroStatus');
 
-const token = process.env.TELEGRAM_BOT_TOKEN || '';
+const token = process.env.TELEGRAM_BOT_TOKEN;
+if (!token) { console.error('ENV TELEGRAM_BOT_TOKEN belum diset.'); process.exit(1); }
+
 const bot = new TelegramBot(token, { polling: true });
-
-/* ===== util kirim aman (chunking) ===== */
-async function safeSend(chatId, text, extra = {}) {
-  const MAX = 3500; // < limit Telegram
-  try {
-    if (!text || text.length <= MAX) return await bot.sendMessage(chatId, text || '(kosong)', extra);
-    const lines = text.split('\n');
-    let buf = '';
-    for (const ln of lines) {
-      if ((buf + ln + '\n').length > MAX) { await bot.sendMessage(chatId, buf, extra); buf = ''; }
-      buf += ln + '\n';
-    }
-    if (buf.trim().length) await bot.sendMessage(chatId, buf, extra);
-  } catch (e) {
-    console.error('safeSend error:', e?.response?.body || e);
-    await bot.sendMessage(chatId, '❌ Gagal mengirim pesan (mungkin terlalu panjang).');
-  }
-}
-
-/* ===== history ===== */
 const historyFilePath = './history.json';
+const MAX_HISTORY = 50;
+
+/* ===================== HISTORY ===================== */
 let history = [];
-try { if (fs.existsSync(historyFilePath)) { const raw = fs.readFileSync(historyFilePath); if (raw) history = JSON.parse(raw); } }
-catch { history = []; }
-function saveHistory(){ try{ fs.writeFileSync(historyFilePath, JSON.stringify(history,null,2)); } catch{} }
-function addHistory(ne1, ne2, start, end){
-  history.push({ ne1, ne2: ne2||'', timestamp: new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'}), duration: ((end-start)/1000)||0 });
-  saveHistory();
+try {
+  if (fs.existsSync(historyFilePath)) {
+    const buf = fs.readFileSync(historyFilePath, 'utf8');
+    history = JSON.parse(buf || '[]');
+    if (!Array.isArray(history)) history = [];
+  }
+} catch { history = []; }
+
+function writeHistory() {
+  try { fs.writeFileSync(historyFilePath, JSON.stringify(history, null, 2), 'utf8'); }
+  catch (e) { console.error('Gagal simpan history:', e.message); }
 }
-function createHistoryButtons(){
-  return history.map((e,i)=> ([
-    { text:`Ulangi ${e.ne1}${e.ne2?` ↔ ${e.ne2}`:''}`, callback_data:`retry_${i}` },
-    { text:`Hapus ${e.ne1}${e.ne2?` ↔ ${e.ne2}`:''}`, callback_data:`delete_${i}` },
+function safeShort(ne) {
+  const parts = String(ne).split('-'); const mid = parts.length > 1 ? parts[1] : parts[0];
+  return (mid || '').slice(0, 4) || ne.slice(0, 4);
+}
+function isDuplicate(ne1, ne2) {
+  return history.some(h => (h.ne1 === ne1 && h.ne2 === ne2) || (h.ne1 === ne2 && h.ne2 === ne1));
+}
+function addHistory(ne1, ne2, result, name, startTime, endTime) {
+  if (isDuplicate(ne1, ne2)) return;
+  const duration = ((endTime || Date.now()) - startTime) / 1000;
+  const timestamp = new Date(endTime || Date.now()).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  history.push({ name, ne1, ne2, shortNe1: safeShort(ne1), shortNe2: safeShort(ne2), result, timestamp, duration });
+  if (history.length > MAX_HISTORY) history = history.slice(-MAX_HISTORY);
+  writeHistory();
+}
+function buildHistoryKeyboard() {
+  return history.map((e, i) => ([
+    { text: `🔄 Cek ulang ${e.shortNe1} ↔ ${e.shortNe2}`, callback_data: `retry_${i}` },
+    { text: `🗑️ Hapus ${e.shortNe1} ↔ ${e.shortNe2}`, callback_data: `delete_${i}` }
   ]));
 }
 
-const btnRun1 = (ne) => ({ reply_markup:{ inline_keyboard:[[ {text:'▶️ Jalankan sekarang', callback_data:`runcek1_${ne}`} ]] }});
-const btnRun2 = (a,b)=> ({ reply_markup:{ inline_keyboard:[[ {text:'▶️ Jalankan sekarang', callback_data:`runcek_${a}_${b}`} ]] }});
+/* =========== Auto-extract NE dari teks bebas =========== */
+/* Pola NE: huruf/angka dengan dash, >= 3 segmen — contoh: SBY-PRDU-OPT-H910D */
+const NE_REGEX = /\b([A-Z]{2,}-[A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){1,})\b/g;
 
-const OVERALL = Number(process.env.OVERALL_TIMEOUT_MS || 150000);
-/* ===== helper timeout ===== */
-function withTimeout(promise, ms){
-  let t; const killer = new Promise((_,rej)=>{ t=setTimeout(()=>rej(new Error(`Timeout ${ms}ms`)), ms); });
-  return Promise.race([promise.finally(()=>clearTimeout(t)), killer]);
+function extractNEs(raw) {
+  if (!raw) return [];
+  const text = String(raw).toUpperCase();
+
+  // Utamakan yang muncul sebagai NE[...]
+  const inBracket = Array.from(text.matchAll(/NE\[(.*?)\]/g))
+    .map(m => m[1].trim().toUpperCase())
+    .filter(Boolean);
+
+  // Tangkap pola umum di seluruh teks
+  const all = Array.from(text.matchAll(NE_REGEX))
+    .map(m => m[1].trim().toUpperCase());
+
+  // Gabungkan (prioritas inBracket), lalu unik
+  const merged = [...inBracket, ...all];
+  const unique = [];
+  for (const s of merged) if (!unique.includes(s)) unique.push(s);
+  return unique;
+}
+function baseKey(ne) {
+  const parts = ne.split('-'); return parts[1] || ne;
+}
+function sortNEPair([a, b]) {
+  if (!a || !b) return [a, b];
+  return baseKey(a) <= baseKey(b) ? [a, b] : [b, a];
 }
 
-/* ===== /cek & parsing teks: TAMPILKAN TOMBOL SAJA (tanpa auto-run) ===== */
+/* ===================== UI helpers ===================== */
+function makeRerunButtons(ne1, ne2) {
+  return {
+    reply_markup: {
+      inline_keyboard: [[{ text: '🔄 Cek ulang', callback_data: `rerun_${ne1}__${ne2}` }]]
+    }
+  };
+}
+
+/* ===================== Message Handler ===================== */
 bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const text = (msg.text||'').trim().toLowerCase();
+  if (!msg.text) return;
+  const text = msg.text.trim();
+  const lower = text.toLowerCase();
 
-  if (text.startsWith('/cek ')) {
-    const parts = (msg.text||'').split(' ').slice(1).map(s=>s.trim()).filter(Boolean);
-    if (parts.length === 1) return safeSend(chatId, `Perintah terdeteksi: /cek ${parts[0]}`, btnRun1(parts[0]));
-    if (parts.length === 2) return safeSend(chatId, `Perintah terdeteksi: /cek ${parts[0]} ${parts[1]}`, btnRun2(parts[0],parts[1]));
-    return safeSend(chatId, '❗ Format: /cek <NE1> [NE2]');
-  }
-
-  if (text === '/history') {
-    if (!history.length) return safeSend(chatId, '❌ Belum ada riwayat pengecekan.');
-    return safeSend(chatId, '👉 Klik di bawah untuk cek ulang atau hapus riwayat:', { reply_markup:{ inline_keyboard: createHistoryButtons() } });
-  }
-
-  if (msg.text) {
-    const { list } = buildCekCommandFromText(msg.text);
-    if (list && list.length === 1) {
-      const ne = list[0];
-      return safeSend(chatId, `ℹ️ Hanya menemukan 1 NE dari teks.\nNE terdeteksi: ${ne}\n\nGunakan perintah ini:\n/cek ${ne}`, btnRun1(ne));
+  // /cek NE1 NE2
+  if (lower.startsWith('/cek ')) {
+    const args = text.split(' ').slice(1).map(s => s.trim()).filter(Boolean);
+    if (args.length !== 2) {
+      return bot.sendMessage(msg.chat.id, '❗ Format salah.\nContoh: /cek SBY-GDK-EN1-H8M14 SBY-BDKL-OPT-H910C');
     }
-    if (list && list.length >= 2) {
-      const a=list[0], b=list.find(x=>x!==a)||list[1];
-      return safeSend(chatId, `NE terdeteksi: ${list.join(', ')}\n\nGunakan perintah ini:\n/cek ${a} ${b}`, btnRun2(a,b));
+    const [ne1, ne2] = args;
+    const name = `${ne1} ${ne2}`;
+    await bot.sendMessage(msg.chat.id, '🔄 Mengecek dua sisi, mohon tunggu…');
+
+    const start = Date.now();
+    const browser = await launchBrowser();
+    try {
+      const textOut = await checkMetroStatus(ne1, ne2, { browser, returnStructured: false });
+      const end = Date.now();
+      addHistory(ne1, ne2, textOut, name, start, end);
+      await bot.sendMessage(
+        msg.chat.id,
+        `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`,
+        makeRerunButtons(ne1, ne2)
+      );
+    } catch (e) {
+      console.error(e);
+      await bot.sendMessage(msg.chat.id, `❌ Gagal melakukan pengecekan: ${e.message || e}`);
+    } finally {
+      await browser.close().catch(() => {});
     }
+    return;
   }
 
-  return safeSend(chatId, '👍');
+  // /history
+  if (lower === '/history') {
+    if (!history.length) return bot.sendMessage(msg.chat.id, '❌ Belum ada riwayat pengecekan.');
+    return bot.sendMessage(msg.chat.id, '👉 Pilih aksi untuk riwayat:', {
+      reply_markup: { inline_keyboard: buildHistoryKeyboard() }
+    });
+  }
+
+  // /start | /help
+  if (lower === '/start' || lower === '/help') {
+    return bot.sendMessage(msg.chat.id, [
+      'Hai! 👋',
+      'Perintah:',
+      '• /cek NE1 NE2  → cek dua arah (Description mengandung base lawan) + tombol Cek ulang',
+      '• /history      → cek ulang / hapus riwayat',
+      '• Kirim teks bebas dengan dua NE (mis. hasil diagnosis) → bot akan kasih command /cek + tombol Jalankan'
+    ].join('\n'));
+  }
+
+  // Teks bebas → auto deteksi 2 NE → saran command /cek + tombol Jalankan
+  const candidates = extractNEs(text);
+  if (candidates.length >= 2) {
+    const [ne1, ne2] = sortNEPair([candidates[0], candidates[1]]);
+    const cmd = `/cek ${ne1} ${ne2}`;
+    return bot.sendMessage(msg.chat.id, [
+      '🔗 Terdeteksi 2 NE dari teks kamu.',
+      'Command siap copy‑paste:',
+      cmd
+    ].join('\n'), {
+      reply_markup: {
+        inline_keyboard: [[{ text: '🚀 Jalankan sekarang', callback_data: `run_${ne1}__${ne2}` }]]
+      }
+    });
+  }
+
+  // default
+  return bot.sendMessage(msg.chat.id, '👍');
 });
 
-/* ===== callback tombol (debounce + timeout + 1× cek) ===== */
-const inflight = new Map();
-
+/* ===================== Callback Buttons ===================== */
 bot.on('callback_query', async (q) => {
   const { data, message } = q;
-  const chatId = message.chat.id;
-  try { await bot.answerCallbackQuery(q.id); } catch {}
-
-  if (!/^runcek(1)?_/.test(data)) return;
-  if (inflight.has(data)) return safeSend(chatId, '⏳ Masih memproses permintaan sebelumnya. Tunggu ya…');
-  inflight.set(data, true);
-
+  await bot.answerCallbackQuery(q.id, { show_alert: false }).catch(() => {});
   try {
-    if (data.startsWith('runcek1_')) {
-      const ne = data.substring('runcek1_'.length);
-      await safeSend(chatId, `🔄 Checking: ${ne}…`);
-      const start = Date.now();
-      const out   = await withTimeout(checkMetroStatus.checkSingleNE(ne), OVERALL);
-      const end   = Date.now();
-      addHistory(ne, null, start, end);
-      return safeSend(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'})}\n\n${out}`, {
-        reply_markup:{ inline_keyboard:[[ {text:'🔁 Cek ulang', callback_data:data} ]] }
-      });
+    // Jalankan sekarang dari saran teks bebas
+    if (data.startsWith('run_')) {
+      const payload = data.slice(4);
+      const [ne1, ne2] = payload.split('__');
+      if (!ne1 || !ne2) return bot.sendMessage(message.chat.id, '⚠️ Format NE tidak valid.');
+      await bot.sendMessage(message.chat.id, `🔄 Menjalankan: ${ne1} ↔ ${ne2}…`);
+      const browser = await launchBrowser();
+      try {
+        const textOut = await checkMetroStatus(ne1, ne2, { browser, returnStructured: false });
+        const end = Date.now();
+        await bot.sendMessage(
+          message.chat.id,
+          `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`,
+          makeRerunButtons(ne1, ne2)
+        );
+      } finally {
+        await browser.close().catch(() => {});
+      }
+      return;
     }
 
-    if (data.startsWith('runcek_')) {
-      const [, ne1, ne2] = data.split('_');
-      await safeSend(chatId, `🔄 Checking: ${ne1} ↔ ${ne2}…`);
-      const start = Date.now();
+    // Cek ulang dari hasil /cek
+    if (data.startsWith('rerun_')) {
+      const payload = data.slice(6);
+      const [ne1, ne2] = payload.split('__');
+      if (!ne1 || !ne2) return;
+      await bot.sendMessage(message.chat.id, `🔄 Cek ulang: ${ne1} ↔ ${ne2}…`);
+      const browser = await launchBrowser();
+      try {
+        const textOut = await checkMetroStatus(ne1, ne2, { browser, returnStructured: false });
+        const end = Date.now();
+        await bot.sendMessage(
+          message.chat.id,
+          `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`,
+          makeRerunButtons(ne1, ne2)
+        );
+      } finally {
+        await browser.close().catch(() => {});
+      }
+      return;
+    }
 
-      // PENTING: cek SEKALI SAJA (fungsi sudah mengembalikan 2 sisi)
-      const out = await withTimeout(checkMetroStatus(ne1, ne2, {
-        mode: "normal",
-        progress: async (t)=>{ try{ await safeSend(chatId, t); }catch{} }
-      }), OVERALL);
+    // Dari menu history
+    if (data.startsWith('retry_')) {
+      const i = Number(data.split('_')[1]);
+      const e = history[i];
+      if (!e) return;
+      await bot.sendMessage(message.chat.id, `🔄 Cek ulang: ${e.ne1} ↔ ${e.ne2}…`);
+      const browser = await launchBrowser();
+      try {
+        const textOut = await checkMetroStatus(e.ne1, e.ne2, { browser, returnStructured: false });
+        const end = Date.now();
+        await bot.sendMessage(
+          message.chat.id,
+          `🕛 Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${textOut}`,
+          makeRerunButtons(e.ne1, e.ne2)
+        );
+      } finally {
+        await browser.close().catch(() => {});
+      }
+      return;
+    }
 
-      const end = Date.now();
-      addHistory(ne1, ne2, start, end);
-      return safeSend(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID',{timeZone:'Asia/Jakarta'})}\n\n${out}`, {
-        reply_markup:{ inline_keyboard:[[ {text:'🔁 Cek ulang', callback_data:data} ]] }
-      });
+    if (data.startsWith('delete_')) {
+      const i = Number(data.split('_')[1]);
+      const e = history[i];
+      if (!e) return;
+      history.splice(i, 1);
+      writeHistory();
+      await bot.sendMessage(message.chat.id, `✅ Riwayat ${e.shortNe1} ↔ ${e.shortNe2} dihapus.`);
+      return;
     }
   } catch (e) {
-    console.error('callback error:', e);
-    await safeSend(chatId, `❌ Error: ${e.message || e}`);
-  } finally {
-    inflight.delete(data);
+    await bot.answerCallbackQuery(q.id, { text: '❌ Terjadi kesalahan. Coba lagi.', show_alert: true });
   }
 });
-
-/* ===== graceful shutdown ===== */
-function quit(){ try{bot.stopPolling();}catch{} setTimeout(()=>process.exit(0),500); }
-process.on('SIGTERM', quit); process.on('SIGINT', quit);
