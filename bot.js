@@ -19,7 +19,7 @@ require('dotenv').config({ path: __dirname + '/.env' });
 
 const fs = require('fs');
 const TelegramBot = require('node-telegram-bot-api');
-const QR = require('qrcode');;
+const QR = require('qrcode');
 
 // optional modules
 let checkMetroStatus=null;
@@ -77,7 +77,7 @@ async function waStart(notifyChatId){
   sock.ev.on('connection.update', (u) => {
     const { connection, lastDisconnect, qr } = u;
 
-    // Kirim QR sebagai gambar (fallback ASCII)
+    // Kirim QR sebagai PNG (fallback ASCII)
     if (qr && notifyChatId) {
       (async () => {
         try {
@@ -106,46 +106,17 @@ async function waStart(notifyChatId){
     }
   });
 }
-      await bot.sendPhoto(notifyChatId, buf, {
-        caption: '📲 Scan QR WhatsApp berikut (berlaku ~60 detik). Jika kadaluarsa, kirim /wa_pair lagi.'
-      });
-    } catch (e) {
-      try {
-        const qrt = require('qrcode-terminal');
-        let ascii=''; qrt.generate(qr,{small:true}, c=>ascii=c);
-        await bot.sendMessage(notifyChatId, 'QR WhatsApp (fallback ASCII):\n\n'+ascii);
-      } catch (e2) {
-        await bot.sendMessage(notifyChatId, 'Gagal membuat QR image: ' + (e && e.message ? e.message : e));
-      }
-    }
-  })();
+
+async function waStop(){
+  try { if (waClient?.ws) waClient.ws.close(); } catch {}
+  try { await waClient?.end?.(); } catch {}
+  waClient = null;
 }
-      await bot.sendPhoto(notifyChatId, buf, { caption: '📲 Scan QR WhatsApp berikut (berlaku ~60 detik). Jika kadaluarsa, kirim /wa_pair lagi.' });
-    } catch (e) {
-      // Fallback ke ASCII jika pembuatan PNG gagal
-      try {
-        const qrt = require('qrcode-terminal');
-        let ascii=''; qrt.generate(qr,{small:true}, c=>ascii=c);
-        await bot.sendMessage(notifyChatId, 'QR WhatsApp (fallback ASCII):\n\n'+ascii);
-      } catch (e2) {
-        await bot.sendMessage(notifyChatId, 'Gagal membuat QR image: ' + (e && e.message ? e.message : e));
-      }
-    }
-  })();
+
+function waStatusText(){
+  return 'WA_ENABLED=' + WA_ENABLED + ' | status=' + (waClient ? 'CONNECTED' : 'OFFLINE');
 }
-, c=>ascii=c);
-        bot.sendMessage(notifyChatId, 'QR WhatsApp (scan di aplikasi WhatsApp):\n\n'+ascii);
-      } catch(e){ bot.sendMessage(notifyChatId, 'QR tersedia namun gagal dirender: '+e.message); }
-    }
-    if (connection==='open' && notifyChatId) bot.sendMessage(notifyChatId,'WhatsApp tersambung.');
-    if (connection==='close' && notifyChatId){
-      const reason=(lastDisconnect && lastDisconnect.error && lastDisconnect.error?.message)||'unknown';
-      bot.sendMessage(notifyChatId,'WhatsApp terputus: '+reason);
-      waClient=null;
-      if (WA_ENABLED) setTimeout(()=>waStart(notifyChatId),5000);
-    }
-  });
-}
+
 async function waStop(){ try{ if(waClient?.ws) waClient.ws.close(); }catch{} try{ await waClient?.end?.(); }catch{} waClient=null; }
 function waStatusText(){ return 'WA_ENABLED='+WA_ENABLED+' | status='+(waClient?'CONNECTED':'OFFLINE'); }
 
