@@ -1,4 +1,4 @@
-// checkMetroStatus.js — final: robust RAW parse + regex match + smart service + clear input + RX->PortStatus fallback
+// checkMetroStatus.js — FINAL: RAW row + regex + smart service + clear input + RX->PortStatus + RAW <tr> fallback
 const puppeteer = require('puppeteer');
 
 const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || null;
@@ -43,7 +43,7 @@ async function selectService(page, targets){
   return false;
 }
 
-/* ---------- scraping ---------- */
+/* ---------- scraping table ---------- */
 async function fetchTable(page, neName, serviceLabel){
   await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
     waitUntil:'domcontentloaded', timeout: PAGE_TIMEOUT
@@ -57,11 +57,11 @@ async function fetchTable(page, neName, serviceLabel){
   await page.$eval('input[name="nename"]', el => el.value = '');
   await page.type('input[name="nename"]', neName);
 
-  // Pilih service lewat value/label apa pun
+  // Pilih service
   const ok = serviceLabel.toLowerCase().includes('rx')
     ? await selectService(page, ['rx-level','rx level','rx'])
     : await selectService(page, ['port-status','port status','port']);
-  if (!ok) { await page.select('select[name="service"]', serviceLabel); } // fallback
+  if (!ok) { await page.select('select[name="service"]', serviceLabel); }
 
   await page.click('input[name="submit"]');
   await page.waitForSelector('iframe#myIframe', { timeout: 10000 });
@@ -81,7 +81,7 @@ async function fetchTable(page, neName, serviceLabel){
       const tables = Array.from(document.querySelectorAll('table'));
       if(!tables.length) return [];
 
-      // pilih tabel paling relevan (paling banyak header cocok)
+      // pilih tabel paling relevan
       let best = { score:-1, table:null };
       for(const t of tables){
         const headers = Array.from(t.querySelectorAll('th,td')).map(c=>c.textContent.trim().toLowerCase());
@@ -103,7 +103,8 @@ async function fetchTable(page, neName, serviceLabel){
       const data = [];
       const trs = Array.from(best.table.querySelectorAll('tr')).slice(1);
       for(const tr of trs){
-        const tds = Array.from(tr.querySelectorAll('td')); if(!tds.length) continue;
+        const tds = Array.from(tr.querySelectorAll('td'));
+        if(!tds.length) continue;
 
         const raw = tds.map(td => (td.textContent||'').trim()).join(' | ');
         const row = { __RAW: raw };
@@ -112,18 +113,35 @@ async function fetchTable(page, neName, serviceLabel){
           if (idx < tds.length) row[name] = tds[idx].textContent.trim();
         });
 
-        // heuristic kalau Description kosong: cari sel yg mengandung "to_" / "to-" / "10g"
+        // heuristik minimal
         if (!row['Description']) {
           const cand = tds.find(td => /to[_\-]|10g/i.test(td.textContent||''));
           if (cand) row['Description'] = cand.textContent.trim();
         }
-        // heuristic minimal NE Name
         if (!row['NE Name'] && tds[1]) row['NE Name'] = tds[1].textContent.trim();
 
         data.push(row);
       }
       return data;
     });
+
+    // fallback super: raw scan tiap <tr> jika rows kosong
+    if (!rows || !rows.length) {
+      const rawRows = await resPage.evaluate(()=>{
+        const out = [];
+        const trs = Array.from(document.querySelectorAll('tr'));
+        for (const tr of trs) {
+          const tds = Array.from(tr.querySelectorAll('td'));
+          if (!tds.length) continue;
+          out.push({
+            '__RAW': tds.map(td => (td.textContent||'').trim()).join(' | ')
+          });
+        }
+        return out;
+      });
+      return rawRows;
+    }
+
     return rows;
   } finally { await resPage.close().catch(()=>{}); }
 }
@@ -141,11 +159,10 @@ function matchesOpponent(text, opponentBase, opponentFull){
   const fullN = norm(opponentFull);
   if (!baseN) return false;
 
-  // match base/full setelah normalisasi
   if (contains(H, baseN) || (fullN && contains(H, fullN))) return true;
 
-  // regex: "to[_- ]*<opponentBase>" toleran underscore/strip/spasi
-  const b = baseN.replace(/\s+/g, '[_\\-\\s]*'); // SBY GGKJ -> SBY[_-\s]*GGKJ
+  // regex: "to[_- ]*<SBY GGKJ>" (dengan toleransi separator)
+  const b = baseN.replace(/\s+/g, '[_\\-\\s]*');
   const re = new RegExp(`TO[_\\-\\s]*${b}`, 'i');
   if (re.test(H)) return true;
 
@@ -162,7 +179,8 @@ function filterByOpponent(rows, opponentBase, opponentFull){
 /* ---------- formatter ---------- */
 function formatLinePlain(it){
   const ip=it['NE IP']||'N/A', name=it['NE Name']||'N/A', iface=it['Interface']||'N/A', spd=it['IF Speed']||'N/A';
-  const desc=it['Description']||'N/A', rx=it['RX Level']||'N/A', thr=it['RX Threshold']||'N/A', oper=it['Oper Status']||'N/A';
+  const desc=it['Description']||it['__RAW']||'N/A';
+  const rx=it['RX Level']||'N/A', thr=it['RX Threshold']||'N/A', oper=it['Oper Status']||'N/A';
   return `▶️ ${ip} | ${name} | ${iface} | ${spd} | ${desc} | ${rx} | ${thr} | ${oper} ${getRxLevelStatusEmoji(rx,thr)}`;
 }
 function formatSidePlain(rows, labelA, labelB){
@@ -179,8 +197,8 @@ async function checkMetroStatus(neName1, neName2, options = {}){
   try{
     const ne1 = toUpperCaseNEName(neName1);
     const ne2 = toUpperCaseNEName(neName2);
-    const baseA = baseLabel(ne1); // contoh: SBY-GGKJ
-    const baseB = baseLabel(ne2); // contoh: SBY-PRMJ
+    const baseA = baseLabel(ne1); // SBY-<...>
+    const baseB = baseLabel(ne2);
 
     // 1) RX Level
     let rowsA_rx = await fetchTable(page, ne1, 'rx-level');
