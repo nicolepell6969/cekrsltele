@@ -60,34 +60,52 @@ try { ({ default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion
 async function waStart(notifyChatId){
   if (waClient || !makeWASocket) return;
   const { state, saveCreds } = await useMultiFileAuthState(__dirname + '/wa_auth');
-  let version=[2,3000,0]; try{ ({version} = await fetchLatestBaileysVersion()); }catch{}
-  const sock = makeWASocket({ version, auth: state, printQRInTerminal:false, syncFullHistory:false, browser:['cekrsltele','Chrome','1.0'] });
-  waClient=sock;
+  let version = [2,3000,0];
+  try { ({ version } = await fetchLatestBaileysVersion()); } catch {}
+
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    printQRInTerminal: false,
+    syncFullHistory: false,
+    browser: ['cekrsltele','Chrome','1.0']
+  });
+
+  waClient = sock;
   sock.ev.on('creds.update', saveCreds);
-  sock.ev.on('connection.update',(u)=>{
+
+  sock.ev.on('connection.update', (u) => {
     const { connection, lastDisconnect, qr } = u;
-    
 
-
-if (qr && notifyChatId) {
-  (async () => {
-    try {
-      const buf = await QR.toBuffer(qr, { type: 'png', scale: 8, margin: 1 });
-      await bot.sendPhoto(notifyChatId, buf, {
-        caption: '📲 Scan QR WhatsApp berikut (±60 detik). Jika kadaluarsa, kirim /wa_pair lagi.'
-      });
-    } catch (e) {
-      try {
-        const qrt = require('qrcode-terminal');
-        let ascii=''; qrt.generate(qr,{small:true}, c=>ascii=c);
-        await bot.sendMessage(notifyChatId, 'QR WhatsApp (fallback ASCII):\n\n'+ascii);
-      } catch (e2) {
-        await bot.sendMessage(notifyChatId, 'Gagal membuat QR image: ' + (e && e.message ? e.message : e));
-      }
+    // Kirim QR sebagai gambar (fallback ASCII)
+    if (qr && notifyChatId) {
+      (async () => {
+        try {
+          const buf = await QR.toBuffer(qr, { type: 'png', scale: 8, margin: 1 });
+          await bot.sendPhoto(notifyChatId, buf, {
+            caption: '📲 Scan QR WhatsApp berikut (±60 detik). Jika kadaluarsa, kirim /wa_pair lagi.'
+          });
+        } catch (e) {
+          try {
+            const qrt = require('qrcode-terminal');
+            let ascii = ''; qrt.generate(qr, { small: true }, c => ascii = c);
+            await bot.sendMessage(notifyChatId, 'QR WhatsApp (fallback ASCII):\n\n' + ascii);
+          } catch (e2) {
+            await bot.sendMessage(notifyChatId, 'Gagal membuat QR image: ' + (e && e.message ? e.message : e));
+          }
+        }
+      })();
     }
-  })();
+
+    if (connection === 'open') {
+      if (notifyChatId) bot.sendMessage(notifyChatId, '✅ WhatsApp tersambung.');
+    } else if (connection === 'close') {
+      const reason = (lastDisconnect && lastDisconnect.error && lastDisconnect.error.message) || 'Terputus';
+      if (notifyChatId) bot.sendMessage(notifyChatId, '⚠️ WhatsApp terputus: ' + reason);
+      waClient = null;
+    }
+  });
 }
-);
       await bot.sendPhoto(notifyChatId, buf, {
         caption: '📲 Scan QR WhatsApp berikut (berlaku ~60 detik). Jika kadaluarsa, kirim /wa_pair lagi.'
       });
