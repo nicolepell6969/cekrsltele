@@ -9,9 +9,9 @@
 const puppeteer = require('puppeteer');
 
 const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || null;
-const PAGE_TIMEOUT = Number(process.env.PAGE_TIMEOUT_MS || 12000);
+const PAGE_TIMEOUT = Number(process.env.PAGE_TIMEOUT_MS || 15000);
 const HEADLESS = process.env.HEADLESS !== 'false';
-const MAX_CANDIDATES = Number(process.env.MAX_CANDIDATES || 6);
+const MAX_CANDIDATES = Number(process.env.MAX_CANDIDATES || 4);
 const HIGHER_IS_BETTER = process.env.RX_HIGHER_IS_BETTER !== 'false';
 
 /* ---------- util ---------- */
@@ -255,6 +255,33 @@ async function launchBrowser(){
 }
 
 async function checkMetroStatus(ne1, ne2, options={}){
+  const browser = options.browser || await getBrowser();
+  const ownBrowser = false; // kita pakai singleton
+  const fA = await createFetcher(browser);
+  const fB = await createFetcher(browser);
+  const logs = [];
+  try{
+    const A = U.up(ne1), B = U.up(ne2);
+    const baseA = U.citySite(A), baseB = U.citySite(B);
+    notifyProgress(options, `🔎 Mencoba varian NE: ${A} vs ${B}…`);
+    const [resA, resB] = await Promise.all([
+      trySide(fA, A, baseB, B, logs),
+      trySide(fB, B, baseA, A, logs),
+    ]);
+    const text = [...logs,
+      fmtSide(resA.rows, U.citySite(resA.used), baseB),
+      ────────────,
+      fmtSide(resB.rows, U.citySite(resB.used), baseA)
+    ].join(
+);
+    if (options.returnStructured){
+      return { logs, sideA: resA.rows, usedA: resA.used, svcA: resA.svc, sideB: resB.rows, usedB: resB.used, svcB: resB.svc };
+    }
+    return text;
+  } catch(e){
+    return `❌ Gagal memeriksa\nError: ${e.message}`;
+  } finally { try{ await fA.close(); }catch{} try{ await fB.close(); }catch{} }
+  return "";
   const browser = options.browser || await launchBrowser();
   const ownBrowser = !options.browser;
   const fA = await createFetcher(browser);
@@ -287,7 +314,6 @@ async function checkMetroStatus(ne1, ne2, options={}){
     return text;
   } catch(e){
     return `❌ Gagal memeriksa\nError: ${e.message}`;
-  } finally {
     try{ await fA.close(); }catch{}
     try{ await fB.close(); }catch{}
     if (ownBrowser) try{ await browser.close(); }catch{}
@@ -305,12 +331,53 @@ async function checkSingleNE(ne, options={}){
     return [...logs, fmtAll(single.rows, U.citySite(single.used))].join('\n');
   } catch(e){
     return `❌ Gagal memeriksa NE\nError: ${e.message}`;
-  } finally {
     try{ await f.close(); }catch{}
     if (ownBrowser) try{ await browser.close(); }catch{}
   }
 }
 
-module.exports = checkMetroStatus;
 module.exports.checkSingleNE = checkSingleNE;
 module.exports.launchBrowser = launchBrowser;
+
+
+// ====== Singleton browser ======
+let _sharedBrowser = null;
+async function getBrowser() {
+  try {
+    if (_sharedBrowser && _sharedBrowser.process() && !_sharedBrowser.process().killed) {
+      return _sharedBrowser;
+    }
+  } catch {}
+  _sharedBrowser = await launchBrowser();
+  return _sharedBrowser;
+}
+
+// Optional: pemanggil dapat kirim progress(text) untuk info ke user
+function notifyProgress(options, text){
+  try {
+    if (options && typeof options.progress === 'function') options.progress(text);
+  } catch {}
+}
+
+// Override genCandidates: urutkan yang paling prospektif dulu
+function genCandidates(ne){
+  const NE = U.up(ne);
+  const parts = NE.split('-');
+  const citySite = U.citySite(NE);
+  const third = parts[2] || '';
+  const swapMode = s => s.replace(/-EN1-/g,'-OPT-').replace(/-OPT-/g,'-EN1-');
+  const swapH = s => s.replace(/H910D/g,'910D').replace(/-910D\b/g,'-H910D');
+
+  const arr = [
+    NE,
+    `${citySite}-EN1-H910D`,
+    `${citySite}-OPT-H910D`,
+    `${citySite}`,
+    swapMode(NE), swapH(NE), swapH(swapMode(NE)),
+    `${citySite}-${third||'EN1'}`, `${citySite}-${third||'OPT'}`,
+    `${citySite}-EN1-910D`, `${citySite}-OPT-910D`
+  ];
+  return U.uniq(arr).slice(0, MAX_CANDIDATES);
+}
+
+// Ubah checkMetroStatus & checkSingleNE supaya pakai getBrowser() & ada progress
