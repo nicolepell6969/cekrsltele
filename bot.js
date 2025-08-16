@@ -185,3 +185,8 @@ bot.on('callback_query', async (query) => {
     bot.answerCallbackQuery(query.id, { text: '❌ Terjadi kesalahan. Coba lagi!', show_alert: true });
   }
 });
+
+// === graceful shutdown ===
+function quit(){ try{bot.stopPolling();}catch{} setTimeout(()=>process.exit(0),500);} 
+process.on("SIGTERM", quit);
+process.on("SIGINT", quit);
