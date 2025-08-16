@@ -1,3 +1,19 @@
+// === CRYPTO SHIM for Baileys (WhatsApp) ===
+(() => {
+  try {
+    // Node 18+: webcrypto tersedia via node:crypto
+    const nodeCrypto = require('node:crypto');
+    if (!globalThis.crypto) {
+      globalThis.crypto = nodeCrypto.webcrypto || nodeCrypto;
+    }
+  } catch (e) {
+    try {
+      // Fallback ke crypto lama jika perlu
+      const c = require('crypto');
+      if (!globalThis.crypto) globalThis.crypto = c;
+    } catch {}
+  }
+})();
 require("crypto");
 require('dotenv').config({ path: __dirname + '/.env' });
 
