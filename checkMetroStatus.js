@@ -1,4 +1,4 @@
-// checkMetroStatus.js — smarter service select + robust matcher + clear input + RX->PortStatus fallback
+// checkMetroStatus.js — final: robust RAW parse + regex match + smart service + clear input + RX->PortStatus fallback
 const puppeteer = require('puppeteer');
 
 const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || null;
@@ -23,9 +23,8 @@ async function launchBrowser(){
   });
 }
 
-/* ---------- select service yang aman ---------- */
+/* ---------- pilih service yang aman ---------- */
 async function selectService(page, targets){
-  // targets: array prioritas, mis. ['rx-level','rx level','rx']
   const value = await page.evaluate((ts)=>{
     const sel = document.querySelector('select[name="service"]');
     if(!sel) return null;
@@ -45,7 +44,7 @@ async function selectService(page, targets){
 }
 
 /* ---------- scraping ---------- */
-async function fetchRxTable(page, neName, serviceLabel){
+async function fetchTable(page, neName, serviceLabel){
   await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
     waitUntil:'domcontentloaded', timeout: PAGE_TIMEOUT
   });
@@ -58,14 +57,11 @@ async function fetchRxTable(page, neName, serviceLabel){
   await page.$eval('input[name="nename"]', el => el.value = '');
   await page.type('input[name="nename"]', neName);
 
-  // Pilih service sesuai label
+  // Pilih service lewat value/label apa pun
   const ok = serviceLabel.toLowerCase().includes('rx')
     ? await selectService(page, ['rx-level','rx level','rx'])
     : await selectService(page, ['port-status','port status','port']);
-  if (!ok) {
-    // fallback hard-set (kalau gagal cari berdasarkan teks)
-    await page.select('select[name="service"]', serviceLabel);
-  }
+  if (!ok) { await page.select('select[name="service"]', serviceLabel); } // fallback
 
   await page.click('input[name="submit"]');
   await page.waitForSelector('iframe#myIframe', { timeout: 10000 });
@@ -84,6 +80,8 @@ async function fetchRxTable(page, neName, serviceLabel){
       const wanted = ['NE Name','Description','RX Level','RX Threshold','Oper Status','Interface','IF Speed','NE IP'];
       const tables = Array.from(document.querySelectorAll('table'));
       if(!tables.length) return [];
+
+      // pilih tabel paling relevan (paling banyak header cocok)
       let best = { score:-1, table:null };
       for(const t of tables){
         const headers = Array.from(t.querySelectorAll('th,td')).map(c=>c.textContent.trim().toLowerCase());
@@ -91,6 +89,8 @@ async function fetchRxTable(page, neName, serviceLabel){
         if (score > best.score) best = { score, table:t };
       }
       if(!best.table) return [];
+
+      // mapping kolom
       const headerRow = best.table.querySelector('tr');
       const headerCells = headerRow ? Array.from(headerRow.children) : [];
       const colIndex = {};
@@ -98,22 +98,34 @@ async function fetchRxTable(page, neName, serviceLabel){
         const txt = cell.textContent.trim().toLowerCase();
         wanted.forEach(w=>{ if(txt.includes(w.toLowerCase())) colIndex[w]=i; });
       });
+
+      // ekstrak baris + RAW gabungan
       const data = [];
       const trs = Array.from(best.table.querySelectorAll('tr')).slice(1);
       for(const tr of trs){
         const tds = Array.from(tr.querySelectorAll('td')); if(!tds.length) continue;
-        const row = {};
+
+        const raw = tds.map(td => (td.textContent||'').trim()).join(' | ');
+        const row = { __RAW: raw };
+
         Object.entries(colIndex).forEach(([name,idx])=>{
-          if(idx < tds.length) row[name] = tds[idx].textContent.trim();
+          if (idx < tds.length) row[name] = tds[idx].textContent.trim();
         });
-        if(Object.keys(row).length) data.push(row);
+
+        // heuristic kalau Description kosong: cari sel yg mengandung "to_" / "to-" / "10g"
+        if (!row['Description']) {
+          const cand = tds.find(td => /to[_\-]|10g/i.test(td.textContent||''));
+          if (cand) row['Description'] = cand.textContent.trim();
+        }
+        // heuristic minimal NE Name
+        if (!row['NE Name'] && tds[1]) row['NE Name'] = tds[1].textContent.trim();
+
+        data.push(row);
       }
       return data;
     });
     return rows;
-  } finally {
-    await resPage.close().catch(()=>{});
-  }
+  } finally { await resPage.close().catch(()=>{}); }
 }
 
 /* ---------- matcher robust ---------- */
@@ -124,16 +136,26 @@ function contains(hay, needle){
   return H.includes(N);
 }
 function matchesOpponent(text, opponentBase, opponentFull){
-  if (contains(text, opponentBase)) return true;
-  const token = (opponentBase.split('-')[1] || opponentBase);
-  if (contains(text, token)) return true;
-  if (opponentFull && contains(text, opponentFull)) return true;
+  const H = String(text || '');
+  const baseN = norm(opponentBase);
+  const fullN = norm(opponentFull);
+  if (!baseN) return false;
+
+  // match base/full setelah normalisasi
+  if (contains(H, baseN) || (fullN && contains(H, fullN))) return true;
+
+  // regex: "to[_- ]*<opponentBase>" toleran underscore/strip/spasi
+  const b = baseN.replace(/\s+/g, '[_\\-\\s]*'); // SBY GGKJ -> SBY[_-\s]*GGKJ
+  const re = new RegExp(`TO[_\\-\\s]*${b}`, 'i');
+  if (re.test(H)) return true;
+
   return false;
 }
 function filterByOpponent(rows, opponentBase, opponentFull){
   return (rows||[]).filter((it)=>{
     return matchesOpponent(it['Description'], opponentBase, opponentFull) ||
-           matchesOpponent(it['NE Name'],    opponentBase, opponentFull);
+           matchesOpponent(it['NE Name'],    opponentBase, opponentFull) ||
+           matchesOpponent(it['__RAW'],      opponentBase, opponentFull);
   });
 }
 
@@ -157,23 +179,23 @@ async function checkMetroStatus(neName1, neName2, options = {}){
   try{
     const ne1 = toUpperCaseNEName(neName1);
     const ne2 = toUpperCaseNEName(neName2);
-    const baseA = baseLabel(ne1); // ex: SBY-GGKJ
-    const baseB = baseLabel(ne2); // ex: SBY-PRMJ
+    const baseA = baseLabel(ne1); // contoh: SBY-GGKJ
+    const baseB = baseLabel(ne2); // contoh: SBY-PRMJ
 
     // 1) RX Level
-    let rowsA_rx = await fetchRxTable(page, ne1, 'rx-level');
-    let rowsB_rx = await fetchRxTable(page, ne2, 'rx-level');
+    let rowsA_rx = await fetchTable(page, ne1, 'rx-level');
+    let rowsB_rx = await fetchTable(page, ne2, 'rx-level');
     let sideA = filterByOpponent(rowsA_rx, baseB, ne2);
     let sideB = filterByOpponent(rowsB_rx, baseA, ne1);
 
     // 2) Fallback -> Port Status bila kosong
     if(!sideA.length){
-      const rowsA_ps = await fetchRxTable(page, ne1, 'port status');
+      const rowsA_ps = await fetchTable(page, ne1, 'port status');
       const pickA = filterByOpponent(rowsA_ps, baseB, ne2);
       if(pickA.length) sideA = pickA;
     }
     if(!sideB.length){
-      const rowsB_ps = await fetchRxTable(page, ne2, 'port status');
+      const rowsB_ps = await fetchTable(page, ne2, 'port status');
       const pickB = filterByOpponent(rowsB_ps, baseA, ne1);
       if(pickB.length) sideB = pickB;
     }
