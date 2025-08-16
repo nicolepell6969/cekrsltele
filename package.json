@@ -11,11 +11,13 @@
   },
   "dependencies": {
     "@adiwajshing/baileys": "^5.0.0",
+    "@whiskeysockets/baileys": "^6.17.16",
     "dotenv": "^16.6.1",
     "node-telegram-bot-api": "^0.66.0",
     "pino": "^9.9.0",
     "puppeteer": "^22.13.1",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
