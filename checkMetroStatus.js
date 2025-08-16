@@ -248,7 +248,8 @@ async function trySingle(fetcher, neOriginal, logs){
 async function launchBrowser(){
   return puppeteer.launch({
     headless: HEADLESS,
-    args: ['--no-sandbox','--disable-setuid-sandbox'],
+    args: [
+      "--single-process", "--no-zygote", "--disable-dev-shm-usage",'--no-sandbox','--disable-setuid-sandbox'],
     executablePath: PUPPETEER_EXECUTABLE_PATH || undefined
   });
 }
