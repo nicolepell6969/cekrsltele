@@ -10,7 +10,6 @@
     } catch {}
   }
 })();
-
 require('dotenv').config({ path: __dirname + '/.env' });
 
 const fs = require('fs');
@@ -18,27 +17,23 @@ const path = require('path');
 const TelegramBot = require('node-telegram-bot-api');
 const QR = require('qrcode');
 
-// ---------- optional modules ----------
 let checkMetroStatus = null;
 try { checkMetroStatus = require('./checkMetroStatus'); }
-catch { console.error('WARN: checkMetroStatus.js tidak ditemukan. /cek akan gagal.'); }
+catch { console.error('WARN: checkMetroStatus.js tidak ditemukan'); }
 
-let buildCekCommandFromText = (t)=>({cmd:null,list:[],note:'textToCommand.js tidak ada'});
-try { ({ buildCekCommandFromText } = require('./textToCommand')); } catch {}
+let { buildCekCommandFromText } = (() => {
+  try { return require('./textToCommand'); }
+  catch { return { buildCekCommandFromText: (t)=>({cmd:null,list:[],note:'modul textToCommand.js tidak ada'}) }; }
+})();
 
-// ---------- Admin store (persisten) ----------
+// === Admin store (persisten) ===
 let adminStore = null;
 try { adminStore = require('./adminStore'); adminStore.seedFromEnv?.(); }
 catch {
   const FILE = path.join(__dirname,'admins.json');
   function _read(){ try{ if(!fs.existsSync(FILE)) return {admins:[]}; return JSON.parse(fs.readFileSync(FILE,'utf8')||'{"admins":[]}'); }catch{return{admins:[]}} }
   function _write(o){ try{ fs.writeFileSync(FILE, JSON.stringify(o,null,2)); }catch{} }
-  function seedFromEnv(){
-    const ids = String(process.env.ADMIN_IDS||'').split(',').map(s=>s.trim()).filter(Boolean).map(x=>String(Number(x))).filter(Boolean);
-    if(!ids.length) return;
-    const o=_read(); const set=new Set((o.admins||[]).map(String));
-    ids.forEach(i=>set.add(i)); o.admins=[...set]; _write(o);
-  }
+  function seedFromEnv(){ const ids=String(process.env.ADMIN_IDS||'').split(',').map(s=>s.trim()).filter(Boolean).map(x=>String(Number(x))).filter(Boolean); if(!ids.length) return; const o=_read(); const set=new Set((o.admins||[]).map(String)); ids.forEach(i=>set.add(i)); o.admins=[...set]; _write(o); }
   function listAdmins(){ return (_read().admins||[]).map(String); }
   function isAdmin(id){ return listAdmins().includes(String(id)); }
   function addAdmin(id){ const sid=String(Number(id)); if(!sid||sid==='NaN') throw new Error('ID tidak valid'); const o=_read(); const set=new Set((o.admins||[]).map(String)); set.add(sid); o.admins=[...set]; _write(o); return o.admins; }
@@ -47,92 +42,371 @@ catch {
   adminStore.seedFromEnv();
 }
 
-// ---------- Telegram init ----------
+// === Telegram init ===
 const token = process.env.TELEGRAM_BOT_TOKEN || '';
 if (!token) { console.error('ERROR: TELEGRAM_BOT_TOKEN kosong di .env'); process.exit(1); }
 const bot = new TelegramBot(token, { polling: { interval: 800, autoStart: true } });
 
-let lastChatId = null;
-bot.on('message', (m)=>{ lastChatId = m.chat && m.chat.id; });
 
-bot.getMe().then(me=>console.log(`Telegram bot: @${me.username} (id:${me.id})`)).catch(e=>console.error('getMe error:', e?.message));
-bot.on('polling_error', (err)=> console.error('polling_error:', err?.response?.body || err?.message || err));
 
-// ---------- Safe long message (pemecah otomatis) ----------
-function splitSmart(text, max=3900){
+
+
+
+
+
+const applySendSafe=require('./sendSafe');
+try{applySendSafe(bot);}catch(e){console.error('WARN sendSafe:',e?.message||e)}
+// === Force-safe long message sender ===
+(function attachSafeSender(){
+  try{
+    const origSend = bot.sendMessage.bind(bot);
+
+    function splitSmart(text, max=3900){
+      const t = String(text ?? '');
+      if (t.length <= max) return [t];
+
+      // coba pecah di 
+
+
+      const chunks = [];
+      let rest = t;
+      const push = (str)=>{ if (str && str.length) chunks.push(str); };
+
+      function takeUntil(boundaryRegex){
+        let out = '';
+        while (rest.length){
+          if (out.length + rest.length <= max){ out += rest; rest = ''; break; }
+          // cari boundary terdekat sebelum max
+          const slice = rest.slice(0, max - out.length);
+          let cut = slice.search(boundaryRegex);
+          if (cut === -1){ // tidak ketemu boundary; coba cari last newline/space
+            const lastNl = slice.lastIndexOf('\n');
+            const lastSp = slice.lastIndexOf(' ');
+            cut = Math.max(lastNl, lastSp);
+            if (cut <= 0) cut = slice.length; // terpaksa hard-cut
+          }
+          out += slice.slice(0, cut);
+          rest = rest.slice(cut);
+          break;
+        }
+        return out;
+      }
+
+      // strategi: ambil blok demi blok dengan preferensi 
+
+      while (rest.length){
+        let part = '';
+        // 1) coba 
+
+
+// [HOTFIX] stripped: // [HOTFIX] removed:         part = takeUntil(/
+
+part = rest.slice(0, Math.min(max, rest.length));
+        rest = rest.slice(part.length);
+        if (part.length === 0) part = rest.slice(0, Math.min(max, rest.length)), rest = rest.slice(part.length);
+
+        // kalau masih terlalu panjang, pecah lagi di 
+ atau spasi
+        if (part.length > max){
+          let p = part.slice(0, max);
+          const lastNl = p.lastIndexOf('\n');
+          const lastSp = p.lastIndexOf(' ');
+          const cut = Math.max(lastNl, lastSp, 0) || p.length;
+          push(p.slice(0, cut));
+          rest = part.slice(cut) + rest;
+        } else {
+          push(part);
+        }
+      }
+      // bersihkan potongan kosong
+      return chunks.map(c => c).filter(Boolean);
+    }
+
+    // expose helper opsional
+    bot.sendLong = async (chatId, text, extra={}) => {
+      const parts = splitSmart(text, 3900);
+      let last;
+      for (const p of parts){
+        // hindari error parse_mode karena potongan tidak sinkron
+        const safeExtra = { ...extra };
+        if (safeExtra.parse_mode) delete safeExtra.parse_mode;
+        last = await origSend(chatId, p, safeExtra);
+      }
+      return last;
+    };
+
+    // Monkey-patch: semua pemanggilan sendMessage lewat pemecah
+    bot.sendMessage = async (chatId, text, extra={}) => {
+      if (typeof text !== 'string') return origSend(chatId, text, extra);
+      const parts = splitSmart(text, 3900);
+      if (parts.length === 1){
+        // kirim biasa (hapus parse_mode bila mendekati limit)
+        const safeExtra = { ...extra };
+        if (text.length > 3800 && safeExtra.parse_mode) delete safeExtra.parse_mode;
+        return origSend(chatId, text, safeExtra);
+      }
+      let last;
+      for (const p of parts){
+        const safeExtra = { ...extra };
+        if (safeExtra.parse_mode) delete safeExtra.parse_mode;
+        last = await origSend(chatId, p, safeExtra);
+      }
+      return last;
+    };
+  }catch(e){
+    console.error('WARN attachSafeSender:', e && e.message ? e.message : e);
+  }
+})();
+// === Force-safe long message sender ===
+(function attachSafeSender(){
+  try{
+    const origSend = bot.sendMessage.bind(bot);
+
+    function splitSmart(text, max=3900){
+      const t = String(text ?? '');
+      if (t.length <= max) return [t];
+
+      // coba pecah di 
+
+
+      const chunks = [];
+      let rest = t;
+      const push = (str)=>{ if (str && str.length) chunks.push(str); };
+
+      function takeUntil(boundaryRegex){
+        let out = '';
+        while (rest.length){
+          if (out.length + rest.length <= max){ out += rest; rest = ''; break; }
+          // cari boundary terdekat sebelum max
+          const slice = rest.slice(0, max - out.length);
+          let cut = slice.search(boundaryRegex);
+          if (cut === -1){ // tidak ketemu boundary; coba cari last newline/space
+            const lastNl = slice.lastIndexOf('\n');
+            const lastSp = slice.lastIndexOf(' ');
+            cut = Math.max(lastNl, lastSp);
+            if (cut <= 0) cut = slice.length; // terpaksa hard-cut
+          }
+          out += slice.slice(0, cut);
+          rest = rest.slice(cut);
+          break;
+        }
+        return out;
+      }
+
+      // strategi: ambil blok demi blok dengan preferensi 
+
+      while (rest.length){
+        let part = '';
+        // 1) coba 
+
+
+// [HOTFIX] stripped: // [HOTFIX] removed:         part = takeUntil(/
+
+part = rest.slice(0, Math.min(max, rest.length));
+        rest = rest.slice(part.length);
+        if (part.length === 0) part = rest.slice(0, Math.min(max, rest.length)), rest = rest.slice(part.length);
+
+        // kalau masih terlalu panjang, pecah lagi di 
+ atau spasi
+        if (part.length > max){
+          let p = part.slice(0, max);
+          const lastNl = p.lastIndexOf('\n');
+          const lastSp = p.lastIndexOf(' ');
+          const cut = Math.max(lastNl, lastSp, 0) || p.length;
+          push(p.slice(0, cut));
+          rest = part.slice(cut) + rest;
+        } else {
+          push(part);
+        }
+      }
+      // bersihkan potongan kosong
+      return chunks.map(c => c).filter(Boolean);
+    }
+
+    // expose helper opsional
+    bot.sendLong = async (chatId, text, extra={}) => {
+      const parts = splitSmart(text, 3900);
+      let last;
+      for (const p of parts){
+        // hindari error parse_mode karena potongan tidak sinkron
+        const safeExtra = { ...extra };
+        if (safeExtra.parse_mode) delete safeExtra.parse_mode;
+        last = await origSend(chatId, p, safeExtra);
+      }
+      return last;
+    };
+
+    // Monkey-patch: semua pemanggilan sendMessage lewat pemecah
+    bot.sendMessage = async (chatId, text, extra={}) => {
+      if (typeof text !== 'string') return origSend(chatId, text, extra);
+      const parts = splitSmart(text, 3900);
+      if (parts.length === 1){
+        // kirim biasa (hapus parse_mode bila mendekati limit)
+        const safeExtra = { ...extra };
+        if (text.length > 3800 && safeExtra.parse_mode) delete safeExtra.parse_mode;
+        return origSend(chatId, text, safeExtra);
+      }
+      let last;
+      for (const p of parts){
+        const safeExtra = { ...extra };
+        if (safeExtra.parse_mode) delete safeExtra.parse_mode;
+        last = await origSend(chatId, p, safeExtra);
+      }
+      return last;
+    };
+  }catch(e){
+    console.error('WARN attachSafeSender:', e && e.message ? e.message : e);
+  }
+})();
+// === Force-safe long message sender ===
+(function attachSafeSender(){
+  try{
+    const origSend = bot.sendMessage.bind(bot);
+
+    function splitSmart(text, max=3900){
+      const t = String(text ?? '');
+      if (t.length <= max) return [t];
+
+      // coba pecah di 
+
+
+      const chunks = [];
+      let rest = t;
+      const push = (str)=>{ if (str && str.length) chunks.push(str); };
+
+      function takeUntil(boundaryRegex){
+        let out = '';
+        while (rest.length){
+          if (out.length + rest.length <= max){ out += rest; rest = ''; break; }
+          // cari boundary terdekat sebelum max
+          const slice = rest.slice(0, max - out.length);
+          let cut = slice.search(boundaryRegex);
+          if (cut === -1){ // tidak ketemu boundary; coba cari last newline/space
+            const lastNl = slice.lastIndexOf('\n');
+            const lastSp = slice.lastIndexOf(' ');
+            cut = Math.max(lastNl, lastSp);
+            if (cut <= 0) cut = slice.length; // terpaksa hard-cut
+          }
+          out += slice.slice(0, cut);
+          rest = rest.slice(cut);
+          break;
+        }
+        return out;
+      }
+
+      // strategi: ambil blok demi blok dengan preferensi 
+
+      while (rest.length){
+        let part = '';
+        // 1) coba 
+
+
+// [HOTFIX] stripped: // [HOTFIX] removed:         part = takeUntil(/
+
+part = rest.slice(0, Math.min(max, rest.length));
+        rest = rest.slice(part.length);
+        if (part.length === 0) part = rest.slice(0, Math.min(max, rest.length)), rest = rest.slice(part.length);
+
+        // kalau masih terlalu panjang, pecah lagi di 
+ atau spasi
+        if (part.length > max){
+          let p = part.slice(0, max);
+          const lastNl = p.lastIndexOf('\n');
+          const lastSp = p.lastIndexOf(' ');
+          const cut = Math.max(lastNl, lastSp, 0) || p.length;
+          push(p.slice(0, cut));
+          rest = part.slice(cut) + rest;
+        } else {
+          push(part);
+        }
+      }
+      // bersihkan potongan kosong
+      return chunks.map(c => c).filter(Boolean);
+    }
+
+    // expose helper opsional
+    bot.sendLong = async (chatId, text, extra={}) => {
+      const parts = splitSmart(text, 3900);
+      let last;
+      for (const p of parts){
+        // hindari error parse_mode karena potongan tidak sinkron
+        const safeExtra = { ...extra };
+        if (safeExtra.parse_mode) delete safeExtra.parse_mode;
+        last = await origSend(chatId, p, safeExtra);
+      }
+      return last;
+    };
+
+    // Monkey-patch: semua pemanggilan sendMessage lewat pemecah
+    bot.sendMessage = async (chatId, text, extra={}) => {
+      if (typeof text !== 'string') return origSend(chatId, text, extra);
+      const parts = splitSmart(text, 3900);
+      if (parts.length === 1){
+        // kirim biasa (hapus parse_mode bila mendekati limit)
+        const safeExtra = { ...extra };
+        if (text.length > 3800 && safeExtra.parse_mode) delete safeExtra.parse_mode;
+        return origSend(chatId, text, safeExtra);
+      }
+      let last;
+      for (const p of parts){
+        const safeExtra = { ...extra };
+        if (safeExtra.parse_mode) delete safeExtra.parse_mode;
+        last = await origSend(chatId, p, safeExtra);
+      }
+      return last;
+    };
+  }catch(e){
+    console.error('WARN attachSafeSender:', e && e.message ? e.message : e);
+  }
+})();
+/** kirim pesan panjang aman untuk Telegram (tanpa kirim .txt) */
+async function sendLong(chatId, text, extra = {}) {
+  const MAX = 3900; // <4096, beri buffer
   const t = String(text ?? '');
-  if (t.length <= max) return [t];
-  const out = [];
-  let rest = t;
-  while (rest.length){
-    if (rest.length <= max){ out.push(rest); break; }
-    // potong di newline/spasi terdekat
-    const slice = rest.slice(0, max);
-    let cut = Math.max(slice.lastIndexOf('\n'), slice.lastIndexOf(' '));
-    if (cut < max * 0.5) cut = max; // kalau boundary terlalu jauh, hard cut
-    out.push(slice.slice(0, cut));
-    rest = rest.slice(cut);
-  }
-  return out.filter(Boolean);
-}
-const _origSend = bot.sendMessage.bind(bot);
-bot.sendMessage = async (chatId, text, extra={}) => {
-  if (typeof text !== 'string') return _origSend(chatId, text, extra);
-  const parts = splitSmart(text, 3900);
-  let last; 
-  for (const p of parts){
-    const safeExtra = { ...extra };
-    if (safeExtra.parse_mode) delete safeExtra.parse_mode;
-    last = await _origSend(chatId, p, safeExtra);
-  }
-  return last;
-};
-bot.sendLong = async (chatId, text, extra={}) => bot.sendMessage(chatId, text, extra);
+  if (t.length <= MAX) return bot.sendMessage(chatId, t, extra);
 
-// ---------- Helper: notif admin ----------
+  const lines = t.split('\n');
+  let buf = '';
+  for (const line of lines) {
+    const would = buf ? (buf + '\n' + line) : line;
+    if (would.length > MAX) {
+      await bot.sendMessage(chatId, buf, extra);
+      buf = line;
+    } else {
+      buf = would;
+    }
+  }
+  if (buf) await bot.sendMessage(chatId, buf, extra);
+}
+
+
+
+// === Helper: kirim pesan ke semua admin dari ENV ADMIN_IDS atau adminStore ===
 async function sendToAdmins(text, opts = {}) {
   try {
     let ids = [];
-    try { ids = (adminStore?.listAdmins?.()||[]).map(String); } catch {}
+    try {
+      if (adminStore?.listAdmins) ids = adminStore.listAdmins().map(String);
+    } catch {}
     if (!ids.length) {
-      ids = String(process.env.ADMIN_IDS || '').split(',').map(v => v.trim()).filter(Boolean);
+      ids = String(process.env.ADMIN_IDS || '')
+        .split(',')
+        .map(v => v.trim())
+        .filter(Boolean);
     }
-    if (!ids.length && lastChatId) ids = [String(lastChatId)];
-    for (const id of ids) { try { await bot.sendMessage(id, text, opts); } catch {} }
+    // fallback: kirim ke chat terakhir yang memulai bot (jika ada) â abaikan jika tidak ada.
+    if (!ids.length && typeof lastChatId !== 'undefined' && lastChatId) {
+      ids = [String(lastChatId)];
+    }
+    for (const id of ids) {
+      try { await bot.sendMessage(id, text, opts); } catch {}
+    }
   } catch {}
 }
+bot.getMe().then(me=>console.log(`Telegram bot: @${me.username} (id:${me.id})`)).catch(e=>console.error('getMe error:', e?.message));
+bot.on('polling_error', (err)=> console.error('polling_error:', err?.response?.body || err?.message || err));
 
-// ---------- History ----------
-const historyFilePath = path.join(__dirname,'history.json');
-let history = [];
-try { if (fs.existsSync(historyFilePath)) history = JSON.parse(fs.readFileSync(historyFilePath,'utf8')||'[]'); } catch {}
-function saveHistory(){ try{ fs.writeFileSync(historyFilePath, JSON.stringify(history,null,2)); }catch{} }
-function isDuplicate(ne1, ne2){ return history.some(h => (h.ne1===ne1 && h.ne2===ne2) || (h.ne1===ne2 && h.ne2===ne1)); }
-function addHistory(ne1, ne2, result, name, startTime, endTime){
-  if (ne2 && isDuplicate(ne1, ne2)) return;
-  const timestamp = new Date(startTime).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
-  const shortNe1 = (ne1.split('-')[1]||ne1).slice(0,4);
-  const shortNe2 = ne2 ? (ne2.split('-')[1]||ne2).slice(0,4) : '';
-  const duration = (endTime - startTime) / 1000;
-  history.push({ name, ne1, ne2: ne2||'', shortNe1, shortNe2, result, timestamp, duration });
-  saveHistory();
-}
-function createHistoryButtons(){
-  return history.map((entry, idx) => ([
-    { text: `Ulangi ${entry.shortNe1}${entry.shortNe2?` ↔ ${entry.shortNe2}`:''}`, callback_data: `retry_${idx}` },
-    { text: `Hapus ${entry.shortNe1}${entry.shortNe2?` ↔ ${entry.shortNe2}`:''}`, callback_data: `delete_${idx}` },
-  ]));
-}
-
-// ---------- runWithTimeout ----------
-function runWithTimeout(promise, ms){
-  return Promise.race([
-    promise,
-    new Promise((_,rej)=>setTimeout(()=>rej(new Error(`Timeout ${ms}ms`)), ms))
-  ]);
-}
-
-// ---------- WhatsApp (opsional) ----------
+// === WhatsApp (opsional) ===
 let WA_ENABLED = (String(process.env.WA_ENABLED||'false').toLowerCase()==='true');
 let waClient=null, makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion;
 try { ({ default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys')); } catch {}
@@ -143,200 +417,96 @@ async function waStart(notifyChatId){
   const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname,'wa_auth'));
   let version = [2,3000,0]; try { ({ version } = await fetchLatestBaileysVersion()); } catch {}
 
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    printQRInTerminal: false,
-    syncFullHistory: false,
-    browser: ['cekrsltele','Chrome','1.0']
-  });
-
-  waClient = sock;
-  sock.ev.on('creds.update', saveCreds);
-  sock.ev.on('connection.update', (u) => {
-    const { connection, lastDisconnect, qr } = u;
-
-    if (qr && notifyChatId) {
-      (async () => {
-        try {
-          const buf = await QR.toBuffer(qr, { type: 'png', scale: 8, margin: 1 });
+  const sock = makeWASocket({ version, auth: state, printQRInTerminal:false, syncFullHistory:false, browser:['cekrsltele','Chrome','1.0'] });
+  
+  // === WA connection.update (QR sebagai foto dengan fallback ASCII) ===
+            const buf = await QR.toBuffer(qr, { type: 'png', scale: 8, margin: 1 });
           await bot.sendPhoto(notifyChatId, buf, {
-            caption: '📲 Scan QR WhatsApp berikut (±60 detik). Jika kadaluarsa, kirim /wa_pair lagi.'
+            caption: 'ð² Scan QR WhatsApp berikut (Â±60 detik). Jika kadaluarsa, kirim /wa_pair lagi.'
           });
         } catch (e) {
           try {
             const qrt = require('qrcode-terminal');
-            let ascii=''; qrt.generate(qr,{small:true}, c=>ascii=c);
-            await bot.sendMessage(notifyChatId, 'QR WhatsApp (fallback ASCII):\n\n'+ascii);
+            let ascii = '';
+            qrt.generate(qr, { small: true }, c => ascii = c);
+            await bot.sendMessage(notifyChatId, 'QR WhatsApp (fallback ASCII):\n\n' + ascii);
           } catch (e2) {
             await bot.sendMessage(notifyChatId, 'Gagal membuat QR image: ' + (e && e.message ? e.message : e));
           }
         }
       })();
     }
-
     if (connection === 'open') {
-      if (notifyChatId) bot.sendMessage(notifyChatId, '✅ WhatsApp tersambung.');
+      if (notifyChatId) bot.sendMessage(notifyChatId, 'â WhatsApp tersambung.');
     } else if (connection === 'close') {
       const reason = (lastDisconnect && lastDisconnect.error && lastDisconnect.error.message) || 'Terputus';
-      if (notifyChatId) bot.sendMessage(notifyChatId, '⚠️ WhatsApp terputus: ' + reason);
-      waClient = null;
-      if (WA_ENABLED) setTimeout(()=>waStart(notifyChatId), 5000);
+      if (notifyChatId) bot.sendMessage(notifyChatId, 'â ï¸ WhatsApp terputus: ' + reason);
+      try { if (globalThis.waClient) globalThis.waClient = null; } catch {}
     }
   });
-}
-async function waStop(){ try{ if(waClient?.ws) waClient.ws.close(); }catch{} try{ await waClient?.end?.(); }catch{} waClient=null; }
-function waStatusText(){ return 'WA_ENABLED='+WA_ENABLED+' | status='+(waClient?'CONNECTED':'OFFLINE'); }
 
-// ---------- HELP ----------
-const HELP_TEXT =
-`📋 *Perintah Utama*
-/help — daftar perintah
-/cek <NE1> [NE2] — cek RX/Port (1 atau 2 sisi)
-/history — tombol riwayat
-
-📋 *Admin*
-/add_admin <id>
-/remove_admin <id>
-/admins — list admin
-
-📲 *WhatsApp*
-/wa_status
-/wa_enable
-/wa_disable
-/wa_pair — kirim QR ke sini`;
-
-function isCommand(txt){ return typeof txt === 'string' && txt.trim().startsWith('/'); }
-function isAdminId(id){ return adminStore?.isAdmin?.(String(id)) || false; }
-
-// ---------- Handlers ----------
-bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const text = (msg.text || '').trim();
-  const low = text.toLowerCase();
-
-  // /help
-  if (low === '/help') { return bot.sendMessage(chatId, HELP_TEXT, { parse_mode: 'Markdown' }); }
-
-  // Admin commands (tanpa warning unknown)
-  if (low.startsWith('/add_admin ')) {
-    if (!isAdminId(msg.from.id)) return bot.sendMessage(chatId, '❌ Admin only.');
-    const id = text.split(' ')[1]; 
-    try { adminStore.addAdmin(id); return bot.sendMessage(chatId, `✅ Admin ditambah: ${id}`); }
-    catch(e){ return bot.sendMessage(chatId, '❌ Gagal: '+(e?.message||e)); }
-  }
-  if (low.startsWith('/remove_admin ')) {
-    if (!isAdminId(msg.from.id)) return bot.sendMessage(chatId, '❌ Admin only.');
-    const id = text.split(' ')[1];
-    try { adminStore.removeAdmin(id); return bot.sendMessage(chatId, `✅ Admin dihapus: ${id}`); }
-    catch(e){ return bot.sendMessage(chatId, '❌ Gagal: '+(e?.message||e)); }
-  }
-  if (low === '/admins') {
-    if (!isAdminId(msg.from.id)) return bot.sendMessage(chatId, '❌ Admin only.');
-    const list = (adminStore.listAdmins?.()||[]).join(', ') || '(kosong)';
-    return bot.sendMessage(chatId, '👑 Admins: ' + list);
-  }
-
-  // WA controls via Telegram
-  if (low === '/wa_status') return bot.sendMessage(chatId, 'ℹ️ ' + waStatusText());
-  if (low === '/wa_enable') {
-    if (!isAdminId(msg.from.id)) return bot.sendMessage(chatId, '❌ Admin only.');
-    WA_ENABLED = true; await bot.sendMessage(chatId, '✅ WA_ENABLED=true'); await waStart(chatId); return;
-  }
-  if (low === '/wa_disable') {
-    if (!isAdminId(msg.from.id)) return bot.sendMessage(chatId, '❌ Admin only.');
-    WA_ENABLED = false; await waStop(); return bot.sendMessage(chatId, '✅ WA dimatikan');
-  }
-  if (low === '/wa_pair') {
-    if (!isAdminId(msg.from.id)) return bot.sendMessage(chatId, '❌ Admin only.');
-    await waStart(chatId); return;
-  }
-
-  // ===== /cek =====
-  if (/^\/cek(\s+|$)/.test(low)) {
-    const tail = text.slice(4); // hilangkan "/cek"
-    const parts = tail.split(/\s+/).map(s=>s.trim()).filter(Boolean);
-
-    // 1 NE
-    if (parts.length === 1) {
-      const ne = parts[0];
-      await bot.sendMessage(chatId, `🔄 Cek satu NE: ${ne}…`);
-      try {
-        const start = Date.now();
-        const result = await runWithTimeout(
-          checkMetroStatus && checkMetroStatus.checkSingleNE
-            ? checkMetroStatus.checkSingleNE(ne)
-            : Promise.reject(new Error('checkSingleNE tidak tersedia')),
-          Number(process.env.CEK_TIMEOUT_MS || 120000)
-        );
-        const end = Date.now();
+waClient = sock;
+  sock.ev.on('creds.update', saveCreds);
+          const end = Date.now();
         addHistory(ne, null, result, ne, start, end);
-        return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${result}`);
+        return bot.sendMessage(chatId, `ðChecked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${result}`);
       } catch(e){
-        return bot.sendMessage(chatId, '❌ Gagal cek 1 NE: '+(e?.message||e));
+        return bot.sendMessage(chatId, 'â Gagal cek 1 NE: '+(e?.message||e));
       }
     }
 
     // 2 NE
     if (parts.length >= 2) {
       const ne1 = parts[0], ne2 = parts[1];
-      await bot.sendMessage(chatId, `🔄 Checking`);
+      await bot.sendMessage(chatId, `ð ONCEK, DITUNGGU`);
       try {
         const start = Date.now();
-        const timeout = Number(process.env.CEK_TIMEOUT_MS || 180000);
-const combined = await runWithTimeout(checkMetroStatus(ne1, ne2, { mode: 'normal' }), timeout);
-const end = Date.now();
-addHistory(ne1, ne2, combined, `${ne1} ${ne2}`, start, end);
-        return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${combined}`, {
-          reply_markup: { inline_keyboard: [[{ text: '🔁 CEK ULANG', callback_data: `retry_last_${history.length-1}` }]] }
+        const r1 = await runWithTimeout(checkMetroStatus(ne1, ne2, { mode: 'normal' }), Number(process.env.CEK_TIMEOUT_MS || 180000));
+        const r2 = await runWithTimeout(checkMetroStatus(ne2, ne1, { mode: 'normal' }), Number(process.env.CEK_TIMEOUT_MS || 180000));
+        const end = Date.now();
+        const combined = `${r1}\nââââââââââââ\n${r2}`;
+        addHistory(ne1, ne2, combined, `${ne1} ${ne2}`, start, end);
+        return bot.sendMessage(chatId, `ðChecked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${combined}`, {
+          reply_markup: { inline_keyboard: [[{ text: 'ð CEK ULANG', callback_data: `retry_last_${history.length-1}` }]] }
         });
       } catch(e){
-        return bot.sendMessage(chatId, '❌ Gagal cek 2 sisi: '+(e?.message||e));
+        return bot.sendMessage(chatId, 'â Gagal cek 2 sisi: '+(e?.message||e));
       }
     }
 
     // salah format
-    return bot.sendMessage(chatId, '⛔ Format: /cek <NE1> [NE2]');
+    return bot.sendMessage(chatId, 'â Format: /cek <NE1> [NE2]');
   }
 
   // ===== /history =====
   if (low === '/history') {
-    if (!history.length) return bot.sendMessage(chatId, '❌ Belum ada riwayat pengecekan.');
-    return bot.sendMessage(chatId, '👉 Klik di bawah untuk cek ulang atau hapus riwayat:', {
+    if (!history.length) return bot.sendMessage(chatId, 'â Belum ada riwayat pengecekan.');
+    return bot.sendMessage(chatId, 'ð Klik di bawah untuk cek ulang atau hapus riwayat:', {
       reply_markup: { inline_keyboard: createHistoryButtons() }
     });
   }
 
   // ===== Teks bebas -> parsing NE =====
-  if (text && !isCommand(text)) {
-    const { list } = buildCekCommandFromText(text);
+  if (text) {
+    const { cmd, list, note } = buildCekCommandFromText(text);
     if (list && list.length === 1) {
       const ne = list[0];
-      return bot.sendMessage(chatId, `ℹ️ Hanya menemukan 1 NE dari teks.\nNE terdeteksi: ${ne}\n\nGunakan perintah ini:\n/cek ${ne}`, {
-        reply_markup: { inline_keyboard: [[{ text: '▶️ Jalankan sekarang', callback_data: `runcek1_${ne}` }]] }
+      return bot.sendMessage(chatId, `â¹ï¸ Hanya menemukan 1 NE dari teks.\nNE terdeteksi: ${ne}\n\nGunakan perintah ini:\n/cek ${ne}`, {
+        reply_markup: { inline_keyboard: [[{ text: 'â¶ï¸ Jalankan sekarang', callback_data: `runcek1_${ne}` }]] }
       });
     }
     if (list && list.length >= 2) {
       const a = list[0], b = list.find(x=>x!==a) || list[1];
       return bot.sendMessage(chatId, `NE terdeteksi: ${list.join(', ')}\n\nGunakan perintah ini:\n/cek ${a} ${b}`, {
-        reply_markup: { inline_keyboard: [[{ text: '▶️ Jalankan sekarang', callback_data: `runcek_${a}_${b}` }]] }
+        reply_markup: { inline_keyboard: [[{ text: 'â¶ï¸ Jalankan sekarang', callback_data: `runcek_${a}_${b}` }]] }
       });
     }
-    // bukan perintah & tidak terparse → diam (tanpa warning)
-    return;
   }
 
-  // Jika perintah tidak dikenali (bukan admin command), beri warning lembut
-  if (isCommand(text)) {
-    const adminCmds = ['/add_admin','/remove_admin','/admins','/wa_status','/wa_enable','/wa_disable','/wa_pair','/help','/cek','/history'];
-    const base = text.split(/\s+/)[0];
-    if (!adminCmds.includes(base)) {
-      return bot.sendMessage(chatId, 'ℹ️ Perintah tidak dikenali.\nKetik /help untuk daftar perintah.');
-    }
-  }
+  // BUKAN perintah & bukan teks yang bisa diparse â jangan spam warning
 });
 
-// ---------- Callback (cek ulang, run now, hapus) ----------
+// ===== Callback (cek ulang, run now, hapus) =====
 bot.on('callback_query', async (q)=>{
   const { data, message } = q;
   const chatId = message.chat.id;
@@ -345,22 +515,22 @@ bot.on('callback_query', async (q)=>{
 
     if (data.startsWith('runcek_')) {
       const [, ne1, ne2] = data.split('_');
-      await bot.sendMessage(chatId, `🔄 Checking: ${ne1} ↔ ${ne2}...`);
-      const timeout = Number(process.env.CEK_TIMEOUT_MS || 180000);
-const combined = await runWithTimeout(checkMetroStatus(ne1, ne2, { mode: 'normal' }), timeout);
-const end = Date.now();
-      return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${combined}`, {
-        reply_markup: { inline_keyboard: [[{ text: '🔁 Cek ulang', callback_data: `runcek_${ne1}_${ne2}` }]] }
+      await bot.sendMessage(chatId, `ð Checking: ${ne1} â ${ne2}...`);
+      const r1 = await runWithTimeout(checkMetroStatus(ne1, ne2, { mode: 'normal' }), Number(process.env.CEK_TIMEOUT_MS || 180000));
+      const r2 = await runWithTimeout(checkMetroStatus(ne2, ne1, { mode: 'normal' }), Number(process.env.CEK_TIMEOUT_MS || 180000));
+      const end = Date.now();
+      return bot.sendMessage(chatId, `ðChecked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${r1}\nââââââââââââ\n${r2}`, {
+        reply_markup: { inline_keyboard: [[{ text: 'ð Cek ulang', callback_data: `runcek_${ne1}_${ne2}` }]] }
       });
     }
 
     if (data.startsWith('runcek1_')) {
       const ne = data.substring('runcek1_'.length);
-      await bot.sendMessage(chatId, `🔄 Checking: ${ne}...`);
+      await bot.sendMessage(chatId, `ð Checking: ${ne}...`);
       const result = await runWithTimeout(checkMetroStatus.checkSingleNE(ne), Number(process.env.CEK_TIMEOUT_MS || 120000));
       const end = Date.now();
-      return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${result}`, {
-        reply_markup: { inline_keyboard: [[{ text: '🔁 Cek ulang', callback_data: `runcek1_${ne}` }]] }
+      return bot.sendMessage(chatId, `ðChecked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${result}`, {
+        reply_markup: { inline_keyboard: [[{ text: 'ð Cek ulang', callback_data: `runcek1_${ne}` }]] }
       });
     }
 
@@ -371,19 +541,19 @@ const end = Date.now();
       const e = history[index];
       if (e) {
         if (!e.ne2) {
-          await bot.sendMessage(chatId, `🔄 Checking: ${e.ne1}...`);
+          await bot.sendMessage(chatId, `ð Checking: ${e.ne1}...`);
           const result = await runWithTimeout(checkMetroStatus.checkSingleNE(e.ne1), Number(process.env.CEK_TIMEOUT_MS || 120000));
           const end = Date.now();
-          return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${result}`, {
-            reply_markup: { inline_keyboard: [[{ text: '🔁 Cek ulang', callback_data: `runcek1_${e.ne1}` }]] }
+          return bot.sendMessage(chatId, `ðChecked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${result}`, {
+            reply_markup: { inline_keyboard: [[{ text: 'ð Cek ulang', callback_data: `runcek1_${e.ne1}` }]] }
           });
         } else {
-          await bot.sendMessage(chatId, `🔄 Checking: ${e.ne1} ↔ ${e.ne2}...`);
-          const timeout = Number(process.env.CEK_TIMEOUT_MS || 180000);
-const combined = await runWithTimeout(checkMetroStatus(e.ne1, e.ne2, { mode: 'normal' }), timeout);
-const end = Date.now();
-          return bot.sendMessage(chatId, `🕛Checked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${combined}`, {
-            reply_markup: { inline_keyboard: [[{ text: '🔁 Cek ulang', callback_data: `runcek_${e.ne1}_${e.ne2}` }]] }
+          await bot.sendMessage(chatId, `ð Checking: ${e.ne1} â ${e.ne2}...`);
+          const r1 = await runWithTimeout(checkMetroStatus(e.ne1, e.ne2, { mode: 'normal' }), Number(process.env.CEK_TIMEOUT_MS || 180000));
+          const r2 = await runWithTimeout(checkMetroStatus(e.ne2, e.ne1, { mode: 'normal' }), Number(process.env.CEK_TIMEOUT_MS || 180000));
+          const end = Date.now();
+          return bot.sendMessage(chatId, `ðChecked Time: ${new Date(end).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n${r1}\nââââââââââââ\n${r2}`, {
+            reply_markup: { inline_keyboard: [[{ text: 'ð Cek ulang', callback_data: `runcek_${e.ne1}_${e.ne2}` }]] }
           });
         }
       }
@@ -393,26 +563,53 @@ const end = Date.now();
       const index = parseInt(data.split('_')[1], 10);
       const e = history[index];
       if (e) {
-        history.splice(index,1); saveHistory();
-        return bot.sendMessage(chatId, `✅ Riwayat ${e.ne1}${e.ne2?` ↔ ${e.ne2}`:''} dihapus.`);
+        history.splice(index, 1);
+        saveHistory();
+
+        // Auto-refresh UI /history pada pesan yang sama
+        const kb = createHistoryButtons();
+        try {
+          await bot.editMessageText('👉 Klik di bawah untuk cek ulang atau hapus riwayat:', {
+            chat_id: chatId,
+            message_id: message.message_id,
+            reply_markup: { inline_keyboard: kb }
+          });
+        } catch (err1) {
+          // Fallback: minimal refresh keyboard
+          try {
+            await bot.editMessageReplyMarkup({ inline_keyboard: kb }, {
+              chat_id: chatId,
+              message_id: message.message_id
+            });
+          } catch (err2) {}
+        }
       }
+      return;
+    }
     }
   } catch(err){
     console.error('callback error:', err);
-    bot.answerCallbackQuery(q.id, { text: '❌ Terjadi kesalahan. Coba lagi!', show_alert: true }).catch(()=>{});
+    bot.answerCallbackQuery(q.id, { text: 'â Terjadi kesalahan. Coba lagi!', show_alert: true }).catch(()=>{});
   }
 });
 
-// ---------- Global error handlers (kirim ke admin) ----------
+// === OPTIONAL: kirim error penting ke admin pertama ===
+function notifyAdmins(text){
+  const admins = adminStore.listAdmins();
+  const target = admins[0];
+  if (target) bot.sendMessage(Number(target), text).catch(()=>{});
+}
+process.on('unhandledRejection', err=> notifyAdmins('â ï¸ unhandledRejection: '+(err?.message||err)));
+process.on('uncaughtException', err=> { notifyAdmins('â ï¸ uncaughtException: '+(err?.message||err)); setTimeout(()=>process.exit(1), 500); });
+
+
+// === global error handlers: kirim error ke admin & exit agar systemd restart ===
 process.on('unhandledRejection', async (err) => {
-  try { await sendToAdmins('❗ *UnhandledRejection*\n' + (err?.stack || err), { parse_mode: 'Markdown' }); } catch {}
-  // jangan exit; biarkan jalan terus
+  try { await sendToAdmins('â *UnhandledRejection*\n' + (err?.stack || err)); } catch {}
+  // tidak exit, biar lanjut jalan
 });
 process.on('uncaughtException', async (err) => {
-  try { await sendToAdmins('❗ *UncaughtException*\n' + (err?.stack || err), { parse_mode: 'Markdown' }); } catch {}
-  // exit agar systemd auto-restart
+  try { await sendToAdmins('â *UncaughtException*\n' + (err?.stack || err)); } catch {}
+  // exit biar systemd auto-restart
   setTimeout(() => process.exit(1), 500);
 });
-
-// ---------- Auto start WA bila di-enable ----------
-if (WA_ENABLED) { sendToAdmins('ℹ️ Inisialisasi WhatsApp…'); waStart(lastChatId || null).catch(()=>{}); }
