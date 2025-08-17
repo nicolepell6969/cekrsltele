@@ -99,7 +99,7 @@ try{applySendSafe(bot);}catch(e){console.error('WARN sendSafe:',e?.message||e)}
         // 1) coba 
 
 
-// [HOTFIX] stripped: // [HOTFIX] removed:         part = takeUntil(/
+        part = ''; // patched: stripped takeUntil
 
 part = rest.slice(0, Math.min(max, rest.length));
         rest = rest.slice(part.length);
@@ -200,7 +200,7 @@ part = rest.slice(0, Math.min(max, rest.length));
         // 1) coba 
 
 
-// [HOTFIX] stripped: // [HOTFIX] removed:         part = takeUntil(/
+        part = ''; // patched: stripped takeUntil
 
 part = rest.slice(0, Math.min(max, rest.length));
         rest = rest.slice(part.length);
@@ -301,7 +301,7 @@ part = rest.slice(0, Math.min(max, rest.length));
         // 1) coba 
 
 
-// [HOTFIX] stripped: // [HOTFIX] removed:         part = takeUntil(/
+        part = ''; // patched: stripped takeUntil
 
 part = rest.slice(0, Math.min(max, rest.length));
         rest = rest.slice(part.length);
