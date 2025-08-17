@@ -106,7 +106,7 @@ part = rest.slice(0, Math.min(max, rest.length));
         if (part.length === 0) part = rest.slice(0, Math.min(max, rest.length)), rest = rest.slice(part.length);
 
         // kalau masih terlalu panjang, pecah lagi di 
- atau spasi
+ // atau spasi
         if (part.length > max){
           let p = part.slice(0, max);
           const lastNl = p.lastIndexOf('\n');
@@ -207,7 +207,7 @@ part = rest.slice(0, Math.min(max, rest.length));
         if (part.length === 0) part = rest.slice(0, Math.min(max, rest.length)), rest = rest.slice(part.length);
 
         // kalau masih terlalu panjang, pecah lagi di 
- atau spasi
+ // atau spasi
         if (part.length > max){
           let p = part.slice(0, max);
           const lastNl = p.lastIndexOf('\n');
@@ -308,7 +308,7 @@ part = rest.slice(0, Math.min(max, rest.length));
         if (part.length === 0) part = rest.slice(0, Math.min(max, rest.length)), rest = rest.slice(part.length);
 
         // kalau masih terlalu panjang, pecah lagi di 
- atau spasi
+ // atau spasi
         if (part.length > max){
           let p = part.slice(0, max);
           const lastNl = p.lastIndexOf('\n');
