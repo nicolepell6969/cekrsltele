@@ -6,6 +6,9 @@ const PAGE_TIMEOUT = Number(process.env.PAGE_TIMEOUT_MS || 60000);
 const HEADLESS = process.env.HEADLESS !== 'false';
 const HIGHER_IS_BETTER = process.env.RX_HIGHER_IS_BETTER !== 'false';
 
+// ⬇️ Tambahan: sumber URL disatukan di sini
+const BASE_URL = process.env.METRO_URL || 'http://124.195.52.213:9487/snmp/metro_manual.php';
+
 /* ---------- helpers ---------- */
 function toUpperCaseNEName(neName){ return String(neName||'').toUpperCase().trim(); }
 function uniq(arr){ return Array.from(new Set(arr.filter(Boolean))); }
@@ -32,7 +35,7 @@ function generateCandidates(ne){
   const third = parts[2] || '';
 
   const swapMode = (s)=> s.replace(/-EN1-/g,'-OPT-').replace(/-OPT-/g,'-EN1-');
-  const swapH = (s)=> s.replace(/H910D/g,'910D').replace(/-910D\\b/g,'-H910D');
+  const swapH = (s)=> s.replace(/H910D/g,'910D').replace(/-910D\b/g,'-H910D');
 
   const common = [
     NE,
@@ -81,11 +84,9 @@ async function selectService(page, targets){
   return false;
 }
 
-/* ---------- scraping satu query ---------- */
+/* ---------- scraping satu query (lama, dipertahankan untuk referensi) ---------- */
 async function fetchTable(page, neName, serviceLabel){
-  await page.goto('http://124.195.52.213:9487/snmp/metro_manual.php', {
-    waitUntil:'domcontentloaded', timeout: PAGE_TIMEOUT
-  });
+  await page.goto(BASE_URL, { waitUntil:'domcontentloaded', timeout: PAGE_TIMEOUT });
 
   // Clear input
   await page.waitForSelector('input[name="nename"]', { timeout: 10000 });
@@ -137,7 +138,7 @@ async function fetchTable(page, neName, serviceLabel){
         // pilih tabel paling relevan
         let best = { score:-1, table:null };
         for(const t of tables){
-          const headers = Array.from(t.querySelectorAll('th,td')).map(c=>c.textContent.trim().toLowerCase());
+          const headers = Array.from(t.querySelectorAll('th,td')).map(c=> (c.textContent||'').trim().toLowerCase());
           const score = wanted.reduce((s,w)=> s + (headers.some(h=>h.includes(w.toLowerCase()))?1:0), 0);
           if (score > best.score) best = { score, table:t };
         }
@@ -147,7 +148,7 @@ async function fetchTable(page, neName, serviceLabel){
           const headerCells = headerRow ? Array.from(headerRow.children) : [];
           const colIndex = {};
           headerCells.forEach((cell,i)=>{
-            const txt = cell.textContent.trim().toLowerCase();
+            const txt = (cell.textContent||'').trim().toLowerCase();
             wanted.forEach(w=>{ if(txt.includes(w.toLowerCase())) colIndex[w]=i; });
           });
 
@@ -224,14 +225,12 @@ async function tryFetchForOneSide(page, neOriginal, opponentBase, opponentFull, 
     const rows = await fetchTable(page, cand, 'rx-level');
     const filtered = filterByOpponent(rows, opponentBase, opponentFull);
     if (filtered.length) return { rows: filtered, used: cand, service: 'rx-level' };
-    logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" di RX Level, mencoba kandidat lain…`);
   }
 
   for (const cand of candidates){
     const rows = await fetchTable(page, cand, 'port status');
     const filtered = filterByOpponent(rows, opponentBase, opponentFull);
     if (filtered.length) return { rows: filtered, used: cand, service: 'port-status' };
-    logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" di Port Status, mencoba kandidat lain…`);
   }
 
   return { rows: [], used: generateCandidates(neOriginal)[0]||neOriginal, service: 'none' };
@@ -248,15 +247,13 @@ function dedupeByRaw(rows){
 }
 async function tryFetchAllForSingle(page, neOriginal, logs){
   const candidates = generateCandidates(neOriginal);
-  // kumpulkan kombinasi RX + Port untuk kandidat pertama yang menghasilkan data apa pun
   for (const cand of candidates){
     const rx = await fetchTable(page, cand, 'rx-level');
-    const ps = await fetchTable(page, cand, 'port status');
-    const merged = dedupeByRaw([...(rx||[]), ...(ps||[])]);
-    if (merged.length) return { rows: merged, used: cand };
-    logs.push(`ℹ️ Tidak ketemu data dengan "${cand}" (RX & Port), mencoba kandidat lain…`);
+    if (rx && rx.length){
+      return { rows: rx, used: cand, service: 'rx-level' };
+    }
   }
-  return { rows: [], used: candidates[0]||neOriginal };
+  return { rows: [], used: candidates[0]||neOriginal, service: 'none' };
 }
 
 /* ---------- public API ---------- */
@@ -326,3 +323,110 @@ module.exports._generateCandidates = generateCandidates;
 module.exports._formatSidePlain = formatSidePlain;
 module.exports._filterByOpponent = filterByOpponent;
 module.exports._norm = (s)=>String(s||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
+
+/* ===== [APPEND] Strict table reader for Metro‑e (override) =====
+   Versi ini mengikuti alur & selector yang sama (input name="nename", select name="service", iframe#myIframe),
+   tetapi pemilihan tabelnya KETAT berdasarkan header agar tidak mengambil tabel lain.
+*/
+async function fetchTable_STRICT(page, neName, serviceLabel) {
+  await page.goto(BASE_URL, { waitUntil:'domcontentloaded', timeout: PAGE_TIMEOUT });
+
+  // isi NE
+  await page.waitForSelector('input[name="nename"]', { timeout: 10000 });
+  await page.focus('input[name="nename"]');
+  await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control');
+  await page.keyboard.press('Backspace');
+  await page.$eval('input[name="nename"]', el => el.value = '');
+  await page.type('input[name="nename"]', neName);
+
+  // pilih service (mirip versi lama)
+  const ok = String(serviceLabel).toLowerCase().includes('rx')
+    ? await selectService(page, ['rx-level','rx level','rx'])
+    : await selectService(page, ['port-status','port status','port']);
+  if (!ok) { await page.select('select[name="service"]', serviceLabel); }
+
+  await page.click('input[name="submit"]');
+  await page.waitForSelector('iframe#myIframe', { timeout: 10000 });
+
+  const frameUrl = await page.evaluate(()=>{
+    const i = document.querySelector('iframe#myIframe');
+    return i && i.src ? i.src : null;
+  });
+  if(!frameUrl) throw new Error('Frame URL tidak ditemukan');
+
+  const resPage = await page.browser().newPage();
+  try{
+    await resPage.goto(frameUrl, { waitUntil:'networkidle2', timeout: PAGE_TIMEOUT });
+
+    const rows = await resPage.evaluate(()=>{
+      // Header wajib yang mendefinisikan tabel Metro‑e yang benar
+      const MUST = [
+        'NE IP','NE Name','Interface','IF Speed',
+        'Description','RX Level','RX Threshold','Oper Status'
+      ].map(s => s.toLowerCase());
+
+      const headersOf = (table) =>
+        Array.from(table.querySelectorAll('tr:first-child th, tr:first-child td'))
+          .map(h => (h.textContent || '').trim().toLowerCase());
+
+      const hasAll = (hs) => {
+        const set = new Set(hs);
+        return MUST.every(m => Array.from(set).some(x => x.includes(m)));
+      };
+
+      const allTables = Array.from(document.querySelectorAll('table'));
+      const strict = allTables.filter(t => hasAll(headersOf(t)));
+
+      // Utamakan tabel yang header-nya lengkap; bila tidak ada, ambil nilai skor tertinggi (kompatibel)
+      let table = strict[0] || null;
+      if (!table) {
+        let best = { score: -1, table: null };
+        for (const t of allTables) {
+          const hs = headersOf(t);
+          const score = MUST.reduce((acc, w) => acc + (hs.some(h => h.includes(w)) ? 1 : 0), 0);
+          if (score > best.score) best = { score, table: t };
+        }
+        table = best.table;
+      }
+      if (!table) return [];
+
+      // Pemetaan kolom by header
+      const headerCells = Array.from(table.querySelectorAll('tr:first-child th, tr:first-child td'));
+      const colIndex = {};
+      headerCells.forEach((cell, i) => {
+        const txt = (cell.textContent || '').trim().toLowerCase();
+        if (txt.includes('ne ip'))        colIndex['NE IP']        = i;
+        if (txt.includes('ne name'))      colIndex['NE Name']      = i;
+        if (txt.includes('interface'))    colIndex['Interface']    = i;
+        if (txt.includes('if speed'))     colIndex['IF Speed']     = i;
+        if (txt.includes('description'))  colIndex['Description']  = i;
+        if (txt.includes('rx level'))     colIndex['RX Level']     = i;
+        if (txt.includes('rx threshold')) colIndex['RX Threshold'] = i;
+        if (txt.includes('oper status'))  colIndex['Oper Status']  = i;
+      });
+
+      // Ambil baris data, hanya yang relevan
+      const trs = Array.from(table.querySelectorAll('tr')).slice(1);
+      const out = [];
+      for (const tr of trs) {
+        const tds = Array.from(tr.querySelectorAll('td'));
+        if (!tds.length) continue;
+        const row = {};
+        Object.entries(colIndex).forEach(([name, idx]) => {
+          if (idx != null && idx < tds.length) row[name] = (tds[idx].textContent || '').trim();
+        });
+        const ok = row['NE IP'] && row['NE Name'] && (row['Interface'] || row['Description']);
+        if (ok) out.push(row);
+      }
+      return out;
+    });
+
+    return rows;
+  } finally { await resPage.close().catch(()=>{}); }
+}
+
+// Override referensi & ekspor supaya kode memakai fungsi STRlCT ini
+try { fetchTable = fetchTable_STRICT; } catch (e) { try { var fetchTable = fetchTable_STRICT; } catch(_) {} }
+try { if (module && module.exports) module.exports.fetchTable = fetchTable_STRICT; } catch {}
+try { exports.fetchTable = fetchTable_STRICT; } catch {}
+// ===== [END APPEND] =====
