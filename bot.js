@@ -251,7 +251,7 @@ bot.on('message', async (msg) => {
         '/git_autopush_off — auto-notify perubahan OFF'
       );
     }
-    return bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'HTML' });
+    return bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'MarkdownV2' });
   }
 
   // ===== /cek =====
