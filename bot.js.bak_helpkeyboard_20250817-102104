@@ -86,16 +86,16 @@ function sameMarkup(a,b){ return JSON.stringify(a||{}) === JSON.stringify(b||{})
 async function safeEditText(chatId, messageId, newText, opts = {}){
   const key = cacheKey(chatId, messageId);
   const prev = _msgCache.get(key) || {};
-  const nextMarkup = opts.reply_markup ?? prev.markup ?? undefined;
+  const nextMarkup = opts.reply_markup || prev.markup || undefined;
   const sameText = String(prev.text||'') === String(newText||'');
   const sameMk = sameMarkup(prev.markup, nextMarkup);
-  if (sameText && sameMk) return null; // tidak perlu edit
+  if (sameText && sameMk) return null; // nothing to do
   try{
     const res = await bot.editMessageText(newText, { chat_id: chatId, message_id: messageId, ...opts });
     _msgCache.set(key, { text: newText, markup: nextMarkup });
     return res;
   } catch(e){
-    // swallow error 400 "message is not modified"
+    // kalau error text sama, coba hanya ganti markup
     if (/message is not modified/i.test(String(e?.message||''))) return null;
     throw e;
   }
@@ -223,9 +223,35 @@ bot.on('message', async (msg) => {
 
   // ===== /help =====
   if (low === '/help') {
-    return bot.sendMessage(chatId, buildHelpPlain(), {
-      reply_markup: buildHelpReplyKeyboard()
-    });
+    const isAdmin = isAdminUser(msg.from.id);
+    const lines = [
+      '📋 *Perintah Utama*',
+      '/help — daftar perintah',
+      '/cek <NE1> [NE2] — cek RX (1 atau 2 sisi, edit 1 pesan)',
+      '/history — tombol riwayat',
+      '',
+      '📲 *WhatsApp*',
+      '/wa_status',
+      '/wa_enable',
+      '/wa_disable',
+      '/wa_pair — kirim QR ke sini',
+    ];
+    if (isAdmin) {
+      lines.push(
+        '',
+        '🛠️ *Admin*',
+        '/add_admin <id>',
+        '/remove_admin <id>',
+        '/admins — list admin',
+        '',
+        '🐙 *Git*',
+        '/git_status — lihat perubahan & tombol push',
+        '/git_push [pesan] — push langsung',
+        '/git_autopush_on — auto-notify perubahan ON',
+        '/git_autopush_off — auto-notify perubahan OFF'
+      );
+    }
+    return bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'MarkdownV2' });
   }
 
   // ===== /cek =====
@@ -577,72 +603,3 @@ process.on('uncaughtException', async (err) => {
     }catch{}
   }, AUTOPUSH_INTERVAL_MS);
 })();
-
-// === [HELP KEYBOARD] Tambahan helper: teks help + reply keyboard (tap => langsung kirim) ===
-function buildHelpPlain() {
-  return [
-    '📋 Perintah Utama',
-    '/help — daftar perintah',
-    '/cek <NE1> [NE2] — cek RX (1 atau 2 sisi, edit 1 pesan)',
-    '/history — tombol riwayat',
-    '',
-    '📲 WhatsApp',
-    '/wa_status',
-    '/wa_enable',
-    '/wa_disable',
-    '/wa_pair — kirim QR ke sini',
-    '',
-    '🛠️ Admin',
-    '/add_admin <id>',
-    '/remove_admin <id>',
-    '/admins — list admin',
-    '',
-    '🐙 Git',
-    '/git_status — lihat perubahan & tombol push',
-    '/git_push [pesan] — push langsung',
-    '/git_autopush_on — auto-notify perubahan ON',
-    '/git_autopush_off — auto-notify perubahan OFF',
-    '',
-    '👉 Tap tombol di bawah untuk mengirim perintah otomatis.'
-  ].join('\n');
-}
-
-function buildHelpReplyKeyboard() {
-  return {
-    keyboard: [
-      // Utama
-      [{ text: '/history' }],
-      [{ text: '/cek ' }], // ada spasi: biar kamu lengkapi NE1 NE2 setelah terkirim
-      // WhatsApp
-      [{ text: '/wa_status' }, { text: '/wa_enable' }],
-      [{ text: '/wa_disable' }, { text: '/wa_pair' }],
-      // Admin
-      [{ text: '/admins' }],
-      [{ text: '/add_admin ' }, { text: '/remove_admin ' }],
-      // Git
-      [{ text: '/git_status' }, { text: '/git_autopush_on' }],
-      [{ text: '/git_autopush_off' }],
-      [{ text: '/git_push ' }],
-      // Tutup keyboard (opsional)
-      [{ text: 'Tutup Keyboard' }]
-    ],
-    resize_keyboard: true,
-    one_time_keyboard: true, // keyboard auto sembunyi setelah dipakai
-    selective: true
-  };
-}
-
-// Opsional: handler ringkas untuk menutup keyboard ketika user menekan "Tutup Keyboard"
-if (typeof bot !== 'undefined' && bot && bot.on) {
-  try {
-    bot.on('message', (m) => {
-      const text = (m && m.text) ? String(m.text) : '';
-      if (text === 'Tutup Keyboard') {
-        bot.sendMessage(m.chat.id, 'Keyboard ditutup.', {
-          reply_markup: { remove_keyboard: true }
-        }).catch(()=>{});
-      }
-    });
-  } catch {}
-}
-// === [END HELP KEYBOARD] ===

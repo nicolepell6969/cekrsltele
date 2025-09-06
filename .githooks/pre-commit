@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if git diff --cached --name-only | grep -E '(^|/)\.env$' >/dev/null 2>&1; then
+  echo "❌ Blocked: .env is staged. Unstage it:  git restore --staged .env"
+  exit 1
+fi
+echo "✅ pre-commit checks passed."
