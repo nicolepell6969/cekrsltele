@@ -32,3 +32,4 @@ scripts/
 !adminStore.js
 !.env.example
 !.gitignore
+!README.md
