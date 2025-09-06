@@ -1,28 +1,34 @@
-# runtime & deps
+# === Runtime & dependencies ===
 node_modules/
 npm-debug.log*
 yarn-error.log*
-pnpm-debug.log*
-package-lock.json
 
-# env & secrets
+# === Local environment ===
 .env
-.env.*
+.env.local
+.env.*.local
+
+# === Backups & temp files ===
+*.bak
+*.bak_*
+*.tmp
+*.swp
+*~
+history.json
+
+# === Development helpers ===
+scripts/
+.dev-scripts/
+.githooks/
+.github/
+
+# === Ignore everything except whitelisted files ===
+*
+!textToCommand.js
+!sendSafe.js
+!package-lock.json
+!checkMetroStatus.js
+!bot.js
+!adminStore.js
 !.env.example
-wa_auth/
-*.pem
-*.key
-
-# logs & dumps
-*.log
-*.err
-logs/
-tmp/
-dist/
-coverage/
-
-# editor/OS
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
+!.gitignore

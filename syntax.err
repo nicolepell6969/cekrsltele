@@ -1,9 +1,0 @@
-SyntaxError: Unexpected token 'catch'
-    at new Function (<anonymous>)
-    at [eval]:1:28
-    at runScriptInThisContext (node:internal/vm:143:10)
-    at node:internal/process/execution:100:14
-    at [eval]-wrapper:6:24
-    at runScript (node:internal/process/execution:83:62)
-    at evalScript (node:internal/process/execution:114:10)
-    at node:internal/main/eval_string:30:3
